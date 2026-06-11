@@ -16,6 +16,10 @@ SyrupBot 是一個「**住在 Discord 群組裡的 LLM 角色**」,不是指令�
 ## 常用指令
 
 ```bash
+# 建立並啟用虛擬環境（需 Python 3.11+；專案用到 tomllib）
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1   # Windows PowerShell（Unix: source .venv/bin/activate）
+
 # 安裝（含開發相依）
 python -m pip install -e ".[dev]"
 
@@ -118,3 +122,6 @@ discord 事件
   (高溫)+ 後處理層(程式強制)。三者一起,不靠單一手段。
 - 程式碼註解、docstring、人設文案使用**繁體中文**。
 - MVP 範圍:只做文字聊天。語音、圖片理解、Web UI、插件、資料庫都是之後的事。
+- **帳號路線:走官方 bot 帳號(discord.py)**。讓角色「更像真人」一律往**行為層**
+  投資(`decision` 切 `llm`、接長期記憶),而非改變接線方式。核心是框架無關的,
+  未來若真要換接線只需改 `bot.py` 一層。

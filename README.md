@@ -12,18 +12,26 @@
 ## 快速開始
 
 ```bash
-# 1. 安裝相依
+# 1. 建立並啟用虛擬環境（建議，避免污染系統 Python；需要 Python 3.11+）
+python -m venv .venv
+source .venv/bin/activate          # Windows PowerShell: .\.venv\Scripts\Activate.ps1
+
+# 2. 安裝相依
 python -m pip install -e ".[dev]"
 
-# 2. 設定環境變數
-cp .env.example .env   # 填入 DISCORD_TOKEN 與 DEEPSEEK_API_KEY
+# 3. 設定環境變數
+cp .env.example .env               # 填入 DISCORD_TOKEN 與 DEEPSEEK_API_KEY
 
-# 3. 啟動
+# 4. 啟動
 python -m syrupbot
 ```
 
-啟動前請在 [Discord Developer Portal](https://discord.com/developers/applications)
-為 bot 開啟 **Message Content Intent**,否則它讀不到群組訊息內容。
+啟動前的兩個準備:
+
+1. 在 [Discord Developer Portal](https://discord.com/developers/applications)
+   為 bot 開啟 **Message Content Intent**,否則它讀不到群組訊息內容。
+2. 用 OAuth2 URL(`bot` scope,至少 `Send Messages` + `Read Message History`
+   權限)把 bot **邀請進你的伺服器**。
 
 ## 她怎麼決定要不要說話
 
