@@ -1,0 +1,157 @@
+"""「是否要回覆」的決策引擎 —— SyrupBot 和傳統指令型 bot 的核心差異。
+
+兩道關卡:
+  第一關(免費的硬規則前置過濾):不是 bot、頻道允許、不是別人的指令、不在冷卻中。
+  第二關(策略):
+    - heuristic:用機率+加權規則判斷,不花 API token。
+    - llm:讓模型讀上下文自己決定要不要插話(一次呼叫同時產生回覆)。
+  捷徑:被 @ 提及或被 reply,直接回(略過第二關)。
+
+策略由 config.decision_strategy 切換,介面不變,方便之後升級。
+"""
+
+from __future__ import annotations
+
+import logging
+import time
+from dataclasses import dataclass
+from random import Random
+from typing import Callable
+
+from .config import Config
+from .context import ConversationStore
+from .llm import LLMClient
+from .persona import Persona
+
+logger = logging.getLogger(__name__)
+
+# 視為「給別的 bot 的指令」而略過的訊息前綴。
+_COMMAND_PREFIXES = ("/", "!", "?", ".", "$", "%", ">", "~")
+
+
+@dataclass(frozen=True)
+class IncomingMessage:
+    """從 Discord 事件抽取出的、與框架無關的訊息資料。
+
+    抽成純資料讓決策邏輯能脫離 discord.py 單獨測試。
+    """
+
+    channel_id: int
+    author: str
+    content: str
+    author_is_bot: bool
+    mentions_bot: bool
+    is_reply_to_bot: bool
+
+
+@dataclass(frozen=True)
+class ReplyDecision:
+    """決策結果。``reply`` 在 llm 策略下會一併帶回生成的內容。"""
+
+    should_reply: bool
+    reason: str
+    reply: str | None = None
+
+
+class DecisionEngine:
+    """決定每則訊息要不要回覆,並管理冷卻狀態。"""
+
+    def __init__(
+        self,
+        config: Config,
+        persona: Persona,
+        llm: LLMClient,
+        context: ConversationStore,
+        *,
+        rng: Random | None = None,
+        clock: Callable[[], float] | None = None,
+    ) -> None:
+        self._config = config
+        self._persona = persona
+        self._llm = llm
+        self._context = context
+        # rng 與 clock 可注入,讓決策在測試中可預測。
+        self._rng = rng or Random()
+        self._clock = clock or time.monotonic
+        self._last_reply: dict[int, float] = {}
+        self._last_decision: dict[int, float] = {}
+
+    async def decide(self, msg: IncomingMessage) -> ReplyDecision:
+        """判斷這則訊息要不要回。"""
+        # ── 第一關:免費的硬規則前置過濾 ──
+        if msg.author_is_bot:
+            return ReplyDecision(False, "發話者是 bot")
+        if not self._channel_allowed(msg.channel_id):
+            return ReplyDecision(False, "頻道不在白名單")
+        if self._looks_like_command(msg.content):
+            return ReplyDecision(False, "看起來是給別的 bot 的指令")
+
+        # ── 捷徑:直接被叫到就回(不受一般冷卻限制) ──
+        if msg.mentions_bot or msg.is_reply_to_bot:
+            return ReplyDecision(True, "被直接 @ 或 reply")
+
+        # 一般訊息要受回覆冷卻限制,避免洗版。
+        if self._in_cooldown(msg.channel_id):
+            return ReplyDecision(False, "還在回覆冷卻時間內")
+
+        # ── 第二關:依策略判斷 ──
+        if self._config.decision_strategy == "llm":
+            return await self._decide_llm(msg)
+        return self._decide_heuristic(msg)
+
+    def record_reply(self, channel_id: int) -> None:
+        """實際送出回覆後呼叫,更新冷卻計時。"""
+        self._last_reply[channel_id] = self._clock()
+
+    # ── 內部:策略 ──
+
+    def _decide_heuristic(self, msg: IncomingMessage) -> ReplyDecision:
+        """機率 + 加權規則,不花 API token。"""
+        score = self._config.reply_probability
+
+        if msg.content.rstrip().endswith(("?", "？")):
+            score += 0.25  # 像有人在拋問題
+        if self._persona.mentioned_by_name(msg.content):
+            score += 0.5  # 有人提到她的名字
+        if self._persona.matches_interest(msg.content):
+            score += 0.2  # 聊到她有興趣的話題
+        if self._context.has_recent_self(msg.channel_id):
+            score += 0.2  # 最近正在參與這串對話,延續話題
+        if len(msg.content.strip()) <= 2:
+            score -= 0.1  # 太短的訊息(「哈」「ok」)不太需要回
+
+        score = max(0.0, min(score, 1.0))
+        if self._rng.random() < score:
+            return ReplyDecision(True, f"heuristic 命中(score={score:.2f})")
+        return ReplyDecision(False, f"heuristic 未命中(score={score:.2f})")
+
+    async def _decide_llm(self, msg: IncomingMessage) -> ReplyDecision:
+        """讓 LLM 讀上下文自己決定;用判斷冷卻控制 API 成本。"""
+        now = self._clock()
+        last = self._last_decision.get(msg.channel_id, float("-inf"))
+        if now - last < self._config.decision_cooldown_seconds:
+            return ReplyDecision(False, "判斷冷卻中(控成本)")
+        self._last_decision[msg.channel_id] = now
+
+        transcript = self._context.transcript(msg.channel_id, self._persona.name)
+        should_reply, reply = await self._llm.judge_and_reply(
+            self._persona.system_prompt, transcript
+        )
+        if should_reply:
+            return ReplyDecision(True, "LLM 判斷想插話", reply=reply)
+        return ReplyDecision(False, "LLM 判斷不插話")
+
+    # ── 內部:前置過濾輔助 ──
+
+    def _channel_allowed(self, channel_id: int) -> bool:
+        allowed = self._config.allowed_channel_ids
+        return not allowed or channel_id in allowed
+
+    @staticmethod
+    def _looks_like_command(content: str) -> bool:
+        stripped = content.lstrip()
+        return stripped.startswith(_COMMAND_PREFIXES)
+
+    def _in_cooldown(self, channel_id: int) -> bool:
+        last = self._last_reply.get(channel_id, float("-inf"))
+        return (self._clock() - last) < self._config.reply_cooldown_seconds

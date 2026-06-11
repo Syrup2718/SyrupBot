@@ -1,0 +1,31 @@
+# 環境變數與密鑰
+.env
+*.env
+!.env.example
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.venv/
+venv/
+env/
+
+# 測試與快取
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# 編輯器 / 作業系統
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Claude Code（本機個人設定，不上傳；之後若要共享設定可另外提交 .claude/settings.json）
+.claude/settings.local.json

@@ -1,0 +1,36 @@
+[project]
+name = "syrupbot"
+version = "0.1.0"
+description = "一個可在 Discord 上聊天的 LLM 機器人"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "discord.py>=2.3,<3",
+    "openai>=1.30",
+    "python-dotenv>=1.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.23",
+    "ruff>=0.4",
+]
+
+[project.scripts]
+syrupbot = "syrupbot.__main__:main"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+
+[tool.ruff]
+src = ["src", "tests"]
+line-length = 88
