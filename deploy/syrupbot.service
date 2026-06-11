@@ -1,0 +1,32 @@
+# SyrupBot systemd service 範本（Debian / 一般 Linux）。
+#
+# 安裝步驟見 deploy/README.md。重點：把下面的 User 與路徑改成你機器上的實際值，
+# 複製到 /etc/systemd/system/syrupbot.service 後 enable + start 即可。
+
+[Unit]
+Description=SyrupBot Discord chat bot
+# 等網路就緒再啟動，避免開機時搶在連線之前起來。
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# ↓↓↓ 改成你的實際使用者與專案路徑 ↓↓↓
+User=syrup
+WorkingDirectory=/home/syrup/SyrupBot
+# 用 venv 裡的 python 跑；WorkingDirectory 設對，config.py 會自動讀同目錄的 .env。
+ExecStart=/home/syrup/SyrupBot/.venv/bin/python -m syrupbot
+
+# crash 或被 DeepSeek/Discord 短暫斷線拖垮時自動重啟。
+Restart=on-failure
+RestartSec=5
+# 避免壞掉時瘋狂重啟（例如 token 失效）：60 秒內重啟超過 5 次就停下，等人來看。
+StartLimitIntervalSec=60
+StartLimitBurst=5
+
+# 基本安全強化（非必要，但放著沒壞處）。
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
