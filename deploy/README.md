@@ -23,8 +23,13 @@ git clone https://github.com/Syrup2718/SyrupBot.git
 cd SyrupBot
 python3 -m venv .venv
 .venv/bin/python -m pip install --upgrade pip
-.venv/bin/python -m pip install -r requirements.txt
+# 用 -e . 安裝「專案本身」（會一併補齊相依）。這專案是 src/ 佈局，
+# 只裝 requirements.txt 不會安裝 syrupbot 套件，會出現 "No module named syrupbot"。
+.venv/bin/python -m pip install -e .
 ```
+
+> `requirements.txt` 只是相依套件的清單，不含專案本身；部署一律用 `pip install -e .`。
+> 用 `-e`（editable）之後，之後 `git pull` 更新程式碼，重啟 service 就生效，不必重裝。
 
 ## 2. 設定 .env（金鑰不會跟著 git 過來，要重新建）
 
