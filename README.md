@@ -30,8 +30,9 @@ python -m syrupbot
 
 1. 在 [Discord Developer Portal](https://discord.com/developers/applications)
    為 bot 開啟 **Message Content Intent**,否則它讀不到群組訊息內容。
-2. 用 OAuth2 URL(`bot` scope,至少 `Send Messages` + `Read Message History`
-   + `Add Reactions`(要讓她按表情)權限)把 bot **邀請進你的伺服器**。
+2. 用 OAuth2 URL 把 bot **邀請進你的伺服器**:
+   - SCOPES 勾 **`bot`** 和 **`applications.commands`**(後者才有 `/漿糖` 斜線指令)。
+   - BOT PERMISSIONS 至少 `Send Messages` + `Read Message History` + `Add Reactions`。
 
 ## 她怎麼決定要不要說話
 
@@ -55,6 +56,26 @@ python -m syrupbot
 對不到就從通用表情池隨機挑),也會**跟著別人一起按**(別人按了、達門檻人數就跟)。
 表情對應表在 [`personas/syrup.toml`](personas/syrup.toml) 的 `[reactions]`,行為機率
 用下方旋鈕調。需要伺服器的 `Add Reactions` 權限。
+
+## 管理員指令(指定她在哪些頻道講話)
+
+有「管理伺服器」權限的人,可以用斜線指令即時控制漿糖在哪些頻道活動(其他人看不到
+這些指令)。設定會存進 `data/channels.json`,**重啟後不會忘**。
+
+| 指令 | 作用 |
+|---|---|
+| `/漿糖 開啟 頻道:#x` | 讓她可以在 #x 講話(加進允許清單) |
+| `/漿糖 關閉 頻道:#x` | 讓她不要在 #x 講話(移出允許清單) |
+| `/漿糖 只在 頻道:#x` | 只在 #x 講話 |
+| `/漿糖 全部開放` | 取消限制,所有頻道都能講 |
+| `/漿糖 狀態` | 看目前允許哪些頻道 |
+
+> 語意是**允許清單**:清單為空 = 所有頻道都可以(預設)。一旦清單有內容,就只在清單內
+> 的頻道講話與貼表情。`ALLOWED_CHANNEL_IDS` 是開機初始值,之後以指令的結果為準。
+>
+> ⚠️ 斜線指令需要邀請時帶 **`applications.commands`** scope。若指令沒出現,多半是
+> 當初邀請只給了 `bot` scope —— 用含兩個 scope 的網址**重新邀請一次**即可(不會踢掉
+> bot、不會掉資料)。
 
 ## 可調旋鈕(`.env`)
 
