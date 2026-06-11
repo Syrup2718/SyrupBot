@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import logging
+from pathlib import Path
 
 from .bot import SyrupBot
+from .channels import ChannelPolicy
 from .config import Config
 from .context import ConversationStore
 from .decision import DecisionEngine
@@ -25,11 +27,16 @@ def main() -> None:
     persona = Persona.load(config.persona)
     context = ConversationStore(config.max_context_messages)
     llm = LLMClient(config)
-    decision = DecisionEngine(config, persona, llm, context)
-    reaction = ReactionEngine(config, persona)
+    # 頻道政策是共用的可變狀態:decision、reaction、bot 指令都指向同一份。
+    policy = ChannelPolicy(
+        initial=config.allowed_channel_ids,
+        path=Path(config.channel_policy_path),
+    )
+    decision = DecisionEngine(config, persona, llm, context, policy=policy)
+    reaction = ReactionEngine(config, persona, policy=policy)
     pipeline = ChatPipeline(persona, context, decision, llm, reaction)
 
-    bot = SyrupBot(pipeline)
+    bot = SyrupBot(pipeline, policy)
     bot.run(config.discord_token, log_handler=None)
 
 

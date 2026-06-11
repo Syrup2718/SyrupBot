@@ -15,6 +15,7 @@ from __future__ import annotations
 import logging
 from random import Random
 
+from .channels import ChannelPolicy
 from .config import Config
 from .decision import IncomingMessage
 from .persona import Persona
@@ -30,10 +31,12 @@ class ReactionEngine:
         config: Config,
         persona: Persona,
         *,
+        policy: ChannelPolicy | None = None,
         rng: Random | None = None,
     ) -> None:
         self._config = config
         self._persona = persona
+        self._policy = policy or ChannelPolicy(initial=config.allowed_channel_ids)
         self._rng = rng or Random()
 
     def decide_self_reaction(self, msg: IncomingMessage) -> str | None:
@@ -76,5 +79,4 @@ class ReactionEngine:
         return self._config.follow_reaction_min_count
 
     def _channel_allowed(self, channel_id: int) -> bool:
-        allowed = self._config.allowed_channel_ids
-        return not allowed or channel_id in allowed
+        return self._policy.is_allowed(channel_id)

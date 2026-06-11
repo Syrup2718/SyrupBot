@@ -18,6 +18,7 @@ from dataclasses import dataclass
 from random import Random
 from typing import Callable
 
+from .channels import ChannelPolicy
 from .config import Config
 from .context import ConversationStore
 from .llm import LLMClient
@@ -63,6 +64,7 @@ class DecisionEngine:
         llm: LLMClient,
         context: ConversationStore,
         *,
+        policy: ChannelPolicy | None = None,
         rng: Random | None = None,
         clock: Callable[[], float] | None = None,
     ) -> None:
@@ -70,6 +72,8 @@ class DecisionEngine:
         self._persona = persona
         self._llm = llm
         self._context = context
+        # 沒注入就依 config 自建一份(不持久化);production 會注入共用的實例。
+        self._policy = policy or ChannelPolicy(initial=config.allowed_channel_ids)
         # rng 與 clock 可注入,讓決策在測試中可預測。
         self._rng = rng or Random()
         self._clock = clock or time.monotonic
@@ -144,8 +148,7 @@ class DecisionEngine:
     # ── 內部:前置過濾輔助 ──
 
     def _channel_allowed(self, channel_id: int) -> bool:
-        allowed = self._config.allowed_channel_ids
-        return not allowed or channel_id in allowed
+        return self._policy.is_allowed(channel_id)
 
     @staticmethod
     def _looks_like_command(content: str) -> bool:

@@ -10,7 +10,9 @@ import asyncio
 import logging
 
 import discord
+from discord import app_commands
 
+from .channels import ChannelPolicy
 from .decision import IncomingMessage
 from .pipeline import ChatPipeline
 
@@ -25,7 +27,7 @@ _TYPING_MAX_SECONDS = 4.0
 class SyrupBot(discord.Client):
     """收 Discord 訊息事件,交給 pipeline 處理並回覆。"""
 
-    def __init__(self, pipeline: ChatPipeline) -> None:
+    def __init__(self, pipeline: ChatPipeline, channel_policy: ChannelPolicy) -> None:
         intents = discord.Intents.default()
         # message_content 是特權 intent,需在 Developer Portal 開啟,
         # 否則讀不到一般訊息的文字內容。
@@ -34,9 +36,92 @@ class SyrupBot(discord.Client):
         intents.reactions = True
         super().__init__(intents=intents)
         self._pipeline = pipeline
+        self._policy = channel_policy
+        self.tree = app_commands.CommandTree(self)
+        self._synced = False
+        self._register_commands()
 
     async def on_ready(self) -> None:
         logger.info("已登入:%s (id=%s)", self.user, self.user.id)
+        # 把斜線指令同步到所在的每個伺服器(per-guild 同步是即時的)。
+        # 需要邀請時帶 applications.commands scope,否則這裡會失敗。
+        if not self._synced:
+            try:
+                for guild in self.guilds:
+                    self.tree.copy_global_to(guild=guild)
+                    await self.tree.sync(guild=guild)
+                self._synced = True
+                logger.info("已同步斜線指令到 %d 個伺服器", len(self.guilds))
+            except discord.HTTPException:
+                logger.exception(
+                    "同步斜線指令失敗(請確認 bot 是用含 applications.commands "
+                    "scope 的網址邀請的)"
+                )
+
+    def _register_commands(self) -> None:
+        """註冊管理員用的 /漿糖 斜線指令(限有「管理伺服器」權限的人)。"""
+        group = app_commands.Group(
+            name="漿糖",
+            description="管理漿糖(限有「管理伺服器」權限的人)",
+            guild_only=True,
+            default_permissions=discord.Permissions(manage_guild=True),
+        )
+
+        @group.command(name="開啟", description="讓漿糖可以在指定頻道講話")
+        @app_commands.describe(頻道="要讓她講話的頻道")
+        async def 開啟(
+            interaction: discord.Interaction, 頻道: discord.TextChannel
+        ) -> None:
+            self._policy.allow(頻道.id)
+            await interaction.response.send_message(
+                f"好喔～我可以在 {頻道.mention} 講話了 🥰", ephemeral=True
+            )
+
+        @group.command(name="關閉", description="讓漿糖不要在指定頻道講話")
+        @app_commands.describe(頻道="要讓她安靜的頻道")
+        async def 關閉(
+            interaction: discord.Interaction, 頻道: discord.TextChannel
+        ) -> None:
+            self._policy.disallow(頻道.id)
+            if self._policy.restricted:
+                text = f"好,我不會在 {頻道.mention} 講話了"
+            else:
+                text = (
+                    f"已把 {頻道.mention} 移出清單。目前沒有指定頻道,"
+                    "我在所有頻道都會講話喔"
+                )
+            await interaction.response.send_message(text, ephemeral=True)
+
+        @group.command(name="只在", description="讓漿糖只在這一個頻道講話")
+        @app_commands.describe(頻道="唯一允許的頻道")
+        async def 只在(
+            interaction: discord.Interaction, 頻道: discord.TextChannel
+        ) -> None:
+            self._policy.only(頻道.id)
+            await interaction.response.send_message(
+                f"好～我只會在 {頻道.mention} 講話", ephemeral=True
+            )
+
+        @group.command(
+            name="全部開放", description="取消頻道限制,讓漿糖在所有頻道都能講話"
+        )
+        async def 全部開放(interaction: discord.Interaction) -> None:
+            self._policy.clear()
+            await interaction.response.send_message(
+                "好～我在所有看得到的頻道都會講話了", ephemeral=True
+            )
+
+        @group.command(name="狀態", description="看漿糖目前允許在哪些頻道講話")
+        async def 狀態(interaction: discord.Interaction) -> None:
+            ids = self._policy.allowed_ids()
+            if not ids:
+                text = "目前沒有限制,我在所有看得到的頻道都會講話~"
+            else:
+                mentions = "、".join(f"<#{cid}>" for cid in ids)
+                text = f"目前我只在這些頻道講話:{mentions}"
+            await interaction.response.send_message(text, ephemeral=True)
+
+        self.tree.add_command(group)
 
     async def on_message(self, message: discord.Message) -> None:
         # 永遠不處理自己的訊息(其他 bot 由 decision 層再過濾)。

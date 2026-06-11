@@ -45,6 +45,8 @@ class Config:
     max_context_messages: int
     allowed_channel_ids: frozenset[int]
     log_level: str
+    # 管理員指令即時調整頻道後,設定存到這個檔(重啟不忘)。
+    channel_policy_path: str = "data/channels.json"
     # ── 表情符號回應(新欄位一律給預設值,避免既有的 Config(**...) 呼叫壞掉)──
     reactions_enabled: bool = True
     self_reaction_probability: float = 0.1  # 看到訊息時,自己貼表情的機率
@@ -96,6 +98,9 @@ class Config:
                 os.environ.get("ALLOWED_CHANNEL_IDS", "")
             ),
             log_level=os.environ.get("LOG_LEVEL", "INFO").upper(),
+            channel_policy_path=os.environ.get(
+                "CHANNEL_POLICY_PATH", "data/channels.json"
+            ),
             reactions_enabled=_parse_bool(
                 os.environ.get("REACTIONS_ENABLED", "true")
             ),
