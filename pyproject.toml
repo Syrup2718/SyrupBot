@@ -3,11 +3,11 @@ name = "syrupbot"
 version = "0.1.0"
 description = "一個可在 Discord 上聊天的 LLM 機器人"
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 dependencies = [
-    "discord.py>=2.3,<3",
-    "openai>=1.30",
-    "python-dotenv>=1.0",
+    "discord.py>=2.7,<3",
+    "openai>=2.41,<3",
+    "python-dotenv>=1.0,<2",
 ]
 
 [project.optional-dependencies]

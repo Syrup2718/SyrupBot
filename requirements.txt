@@ -1,3 +1,13 @@
-discord.py>=2.3,<3
-openai>=1.30
-python-dotenv>=1.0
+# SyrupBot 執行期相依（部署到其他主機時用）。
+#
+# 需要 Python 3.11+（程式用到標準庫 tomllib，3.11 才有）。
+# 安裝：python -m pip install -r requirements.txt
+#
+# 這裡只列「跑起來」需要的套件，不含開發工具（pytest/ruff 等）。
+# 版本下限以本機實際驗證過的為基準，並鎖住主版本避免破壞性更新。
+# 相依的正式來源是 pyproject.toml；要做開發或跑測試請改用：
+#   python -m pip install -e ".[dev]"
+
+discord.py>=2.7,<3
+openai>=2.41,<3
+python-dotenv>=1.0,<2
