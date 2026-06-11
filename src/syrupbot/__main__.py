@@ -11,6 +11,7 @@ from .decision import DecisionEngine
 from .llm import LLMClient
 from .persona import Persona
 from .pipeline import ChatPipeline
+from .reaction import ReactionEngine
 
 
 def main() -> None:
@@ -25,7 +26,8 @@ def main() -> None:
     context = ConversationStore(config.max_context_messages)
     llm = LLMClient(config)
     decision = DecisionEngine(config, persona, llm, context)
-    pipeline = ChatPipeline(persona, context, decision, llm)
+    reaction = ReactionEngine(config, persona)
+    pipeline = ChatPipeline(persona, context, decision, llm, reaction)
 
     bot = SyrupBot(pipeline)
     bot.run(config.discord_token, log_handler=None)

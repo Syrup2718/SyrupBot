@@ -22,6 +22,11 @@ def _parse_channel_ids(raw: str) -> frozenset[int]:
     return frozenset(int(part) for part in raw.split(",") if part.strip())
 
 
+def _parse_bool(raw: str) -> bool:
+    """把字串解析成布林;0/false/no/off/空字串視為 False,其餘 True。"""
+    return raw.strip().lower() not in ("", "0", "false", "no", "off")
+
+
 @dataclass(frozen=True)
 class Config:
     """所有執行期設定的單一來源。"""
@@ -40,6 +45,11 @@ class Config:
     max_context_messages: int
     allowed_channel_ids: frozenset[int]
     log_level: str
+    # ── 表情符號回應(新欄位一律給預設值,避免既有的 Config(**...) 呼叫壞掉)──
+    reactions_enabled: bool = True
+    self_reaction_probability: float = 0.1  # 看到訊息時,自己貼表情的機率
+    follow_reaction_probability: float = 0.3  # 別人按了表情時,跟著按的機率
+    follow_reaction_min_count: int = 2  # 至少要有幾個人按過,才考慮跟著按
 
     @classmethod
     def from_env(cls) -> "Config":
@@ -86,4 +96,16 @@ class Config:
                 os.environ.get("ALLOWED_CHANNEL_IDS", "")
             ),
             log_level=os.environ.get("LOG_LEVEL", "INFO").upper(),
+            reactions_enabled=_parse_bool(
+                os.environ.get("REACTIONS_ENABLED", "true")
+            ),
+            self_reaction_probability=float(
+                os.environ.get("SELF_REACTION_PROBABILITY", "0.1")
+            ),
+            follow_reaction_probability=float(
+                os.environ.get("FOLLOW_REACTION_PROBABILITY", "0.3")
+            ),
+            follow_reaction_min_count=int(
+                os.environ.get("FOLLOW_REACTION_MIN_COUNT", "2")
+            ),
         )

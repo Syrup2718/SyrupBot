@@ -7,18 +7,28 @@
 from __future__ import annotations
 
 import logging
+from dataclasses import dataclass, field
 
 from .context import ConversationStore
 from .decision import DecisionEngine, IncomingMessage
 from .llm import LLMClient
 from .persona import Persona
 from .postprocess import humanize, split_message
+from .reaction import ReactionEngine
 
 logger = logging.getLogger(__name__)
 
 
+@dataclass(frozen=True)
+class PipelineResult:
+    """一則訊息處理後的結果:要送的訊息段,以及(可選的)要貼在原訊息上的表情。"""
+
+    replies: list[str] = field(default_factory=list)
+    reaction: str | None = None
+
+
 class ChatPipeline:
-    """處理單則訊息,回傳要送回 Discord 的內容(可能多則,或不回)。"""
+    """處理單則訊息,回傳要送回 Discord 的內容(可能多則、或不回、或只貼表情)。"""
 
     def __init__(
         self,
@@ -26,22 +36,27 @@ class ChatPipeline:
         context: ConversationStore,
         decision: DecisionEngine,
         llm: LLMClient,
+        reaction: ReactionEngine,
     ) -> None:
         self._persona = persona
         self._context = context
         self._decision = decision
         self._llm = llm
+        self._reaction = reaction
 
-    async def handle(self, msg: IncomingMessage) -> list[str]:
-        """處理一則訊息;回傳要傳送的訊息段(空 list 代表不回)。"""
+    async def handle(self, msg: IncomingMessage) -> PipelineResult:
+        """處理一則訊息;回傳要傳送的訊息段與要貼的表情。"""
         # 先把非 bot 的訊息記進上下文(不論最後回不回,都要維持對話脈絡)。
         if not msg.author_is_bot:
             self._context.add(msg.channel_id, msg.author, msg.content, is_self=False)
 
+        # 「要不要貼表情」與「要不要回話」彼此獨立:可能只貼表情不回話。
+        reaction = self._reaction.decide_self_reaction(msg)
+
         decision = await self._decision.decide(msg)
         logger.debug("頻道 %s 決策:%s", msg.channel_id, decision.reason)
         if not decision.should_reply:
-            return []
+            return PipelineResult(reaction=reaction)
 
         # llm 策略可能已經把回覆生出來了;heuristic 策略則在這裡才生成。
         if decision.reply is not None:
@@ -54,9 +69,18 @@ class ChatPipeline:
 
         reply = humanize(raw_reply)
         if not reply:
-            return []
+            return PipelineResult(reaction=reaction)
 
         # 記下自己的發言,並更新冷卻。
         self._context.add(msg.channel_id, self._persona.name, reply, is_self=True)
         self._decision.record_reply(msg.channel_id)
-        return split_message(reply)
+        return PipelineResult(replies=split_message(reply), reaction=reaction)
+
+    def should_follow_reaction(self, channel_id: int) -> bool:
+        """別人按了表情時,是否(機率上)要跟著按。"""
+        return self._reaction.should_follow_reaction(channel_id)
+
+    @property
+    def follow_reaction_min_count(self) -> int:
+        """至少要有幾個人按過,漿糖才跟著按。"""
+        return self._reaction.follow_min_count

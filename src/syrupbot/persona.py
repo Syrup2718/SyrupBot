@@ -27,6 +27,9 @@ class Persona:
     interests: tuple[str, ...]
     examples: tuple[tuple[str, str], ...]  # (對方說的, 角色回的)
     forbidden: tuple[str, ...]
+    # 表情回應:關鍵字→表情的對應,以及對不到關鍵字時的通用表情池。
+    reaction_keywords: tuple[tuple[str, str], ...] = ()
+    reaction_emojis: tuple[str, ...] = ()
     _system_prompt: str = field(default="", compare=False)
 
     @classmethod
@@ -42,6 +45,9 @@ class Persona:
         examples = tuple(
             (ex["user"], ex["syrup"]) for ex in data.get("examples", [])
         )
+        reactions = data.get("reactions", {})
+        reaction_keywords = tuple(reactions.get("keywords", {}).items())
+        reaction_emojis = tuple(reactions.get("emojis", []))
         return cls(
             name=data["name"],
             aliases=tuple(data.get("aliases", [])),
@@ -52,6 +58,8 @@ class Persona:
             interests=tuple(data.get("interests", [])),
             examples=examples,
             forbidden=tuple(data.get("forbidden", [])),
+            reaction_keywords=reaction_keywords,
+            reaction_emojis=reaction_emojis,
         )
 
     @property
@@ -99,3 +107,13 @@ class Persona:
     def matches_interest(self, text: str) -> bool:
         """文字是否命中角色的興趣關鍵字。"""
         return any(keyword in text for keyword in self.interests)
+
+    def reaction_for(self, text: str) -> str | None:
+        """依訊息內容挑一個最貼切的表情;對不到任何關鍵字時回 None。
+
+        (對不到時要不要改用通用表情池,交給上層 ReactionEngine 決定。)
+        """
+        for keyword, emoji in self.reaction_keywords:
+            if keyword in text:
+                return emoji
+        return None

@@ -30,6 +30,8 @@ class SyrupBot(discord.Client):
         # message_content 是特權 intent,需在 Developer Portal 開啟,
         # 否則讀不到一般訊息的文字內容。
         intents.message_content = True
+        # 表情事件用的 intent(非特權,default 其實已含,這裡明示以免日後誤改)。
+        intents.reactions = True
         super().__init__(intents=intents)
         self._pipeline = pipeline
 
@@ -43,13 +45,61 @@ class SyrupBot(discord.Client):
 
         incoming = self._to_incoming(message)
         try:
-            replies = await self._pipeline.handle(incoming)
+            result = await self._pipeline.handle(incoming)
         except Exception:  # noqa: BLE001 — 單則訊息失敗不該拖垮整個 bot。
             logger.exception("處理訊息時發生錯誤")
             return
 
-        for chunk in replies:
+        # 先貼表情(若有),再(可能)回話。
+        if result.reaction:
+            await self._react(message, result.reaction)
+        for chunk in result.replies:
             await self._send_like_human(message.channel, chunk)
+
+    async def on_raw_reaction_add(
+        self, payload: discord.RawReactionActionEvent
+    ) -> None:
+        """別人對某訊息按了表情 → 漿糖可能跟著按同一個。"""
+        if self.user is not None and payload.user_id == self.user.id:
+            return  # 自己按的,不要對自己的反應再反應(也避免無限迴圈)。
+        if payload.member is not None and payload.member.bot:
+            return  # 別的 bot 按的,略過。
+        # 第一關(便宜):開關、頻道、機率。沒過就不抓訊息,省 API 呼叫。
+        if not self._pipeline.should_follow_reaction(payload.channel_id):
+            return
+
+        channel = self.get_channel(payload.channel_id)
+        if channel is None:
+            try:
+                channel = await self.fetch_channel(payload.channel_id)
+            except (discord.NotFound, discord.Forbidden):
+                return
+        if not isinstance(channel, discord.abc.Messageable):
+            return
+        try:
+            message = await channel.fetch_message(payload.message_id)
+        except (discord.NotFound, discord.Forbidden, discord.HTTPException):
+            return
+
+        # 第二關:找到對應的那個表情,確認自己沒按過、且已有足夠的人按。
+        target = next(
+            (r for r in message.reactions if str(r.emoji) == str(payload.emoji)),
+            None,
+        )
+        if target is None or target.me:
+            return
+        if target.count < self._pipeline.follow_reaction_min_count:
+            return
+        await self._react(message, payload.emoji)
+
+    async def _react(
+        self, message: discord.Message, emoji: discord.PartialEmoji | str
+    ) -> None:
+        """貼表情,並吞掉常見錯誤(沒權限、外部自訂表情等),不要拖垮 bot。"""
+        try:
+            await message.add_reaction(emoji)
+        except discord.HTTPException:
+            logger.debug("貼表情失敗(可能沒權限或外部自訂表情)", exc_info=True)
 
     def _to_incoming(self, message: discord.Message) -> IncomingMessage:
         """把 discord.Message 抽成框架無關的 IncomingMessage。"""
