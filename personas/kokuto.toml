@@ -97,7 +97,7 @@ forbidden = [
 ]
 
 [reactions]
-emojis = ["👍", "😂", "🤔", "👀"]
+emojis = ["👍", "😂", "🤔", "👀", "😋"]
 
 [reactions.keywords]
 "笑死" = "😂"
