@@ -70,11 +70,13 @@ sudo systemctl start syrupbot
 ```bash
 sudo systemctl status syrupbot       # 看狀態（是否 active）
 journalctl -u syrupbot -f            # 即時看 log（找「已登入」或錯誤）
-sudo systemctl restart syrupbot      # 改了 .env 或人設後重啟套用
+sudo systemctl restart syrupbot      # 改了 settings.toml、.env 或人設後重啟套用
 sudo systemctl stop syrupbot         # 停止
 ```
 
-> 改了 `personas/*.toml`、`.env` 或 `llm.local.env` 後，要 `systemctl restart syrupbot` 才會生效。
+> 改了 `settings.toml`、`personas/*.toml`、`.env` 或 `llm.local.env` 後，要 `systemctl restart syrupbot` 才會生效。
+> 行為參數（回覆機率、冷卻等）在 `settings.toml`，會跟著 `git pull` 更新；只想在主機上調整時，
+> 可以在主機的 `.env` 加同名環境變數覆蓋（例如 `REPLY_PROBABILITY=0.3`），啟動 log 會提醒。
 > 更新程式：`git pull` 後一樣 `restart`。
 
 ### 看網頁後台

@@ -75,23 +75,23 @@ if (-not (Test-Path llm.local.env)) {
 ```
 
 通過頻道與指令過濾後，**@ 漿糖**或**回覆她的訊息**會直接觸發回覆。一般訊息則由
-`DECISION_STRATEGY` 決定。`heuristic` 使用本機規則與機率，`llm` 會請模型依上下文判斷，
+`settings.toml` 的 `[reply] strategy` 決定。`heuristic` 使用本機規則與機率，`llm` 會請模型依上下文判斷，
 `hybrid` 則先用本機規則決定要不要看、抽中才問模型。
 
 她講得越多，主動插話的機率就越低（話量疲勞），之後隨時間慢慢恢復；被 @ 或回覆不受影響。
 
 大家聊了一陣子後突然安靜很久時，她偶爾會自己接一句（冷場接話），沒有想說的就不說。
 
-別的 bot 說的話她也會回，判斷方式跟成員一樣（`BOT_REPLY_MODE=all`）。為了避免兩個 bot
-互相接話停不下來，每個頻道 10 分鐘內最多回 bot 3 次；只想在被 bot @ 時回可設 `mention`，
-完全不回設 `off`。她不會對 bot 的訊息貼表情。
+別的 bot 說的話她也會回，判斷方式跟成員一樣（`[bots] reply_mode = "all"`）。為了避免兩個 bot
+互相接話停不下來，每個頻道有回 bot 的次數上限（`reply_max` / `reply_window_seconds`）；
+只想在被 bot @ 時回可設 `mention`，完全不回設 `off`。她不會對 bot 的訊息貼表情。
 
 她回話時會像真人一樣看情況用 Discord 的「回覆」引用對方訊息：中間有別人插話、或對方本來就是
-在回覆她時一定引用，其他時候偶爾引用（`REPLY_QUOTE_MODE`）。冷場接話時引用的是她接的那則。
-預設不會因引用而通知對方（`REPLY_QUOTE_PING`）。
+在回覆她時一定引用，其他時候偶爾引用（`[quote]`）。冷場接話時引用的是她接的那則。
+預設不會因引用而通知對方（`[quote] ping`）。
 
 需要點名時她會 tag 人，例如同時跟好幾個人聊、或想叫某人來看。只能 tag 最近在這個頻道講過話的人，
-永遠不會 @everyone、@here 或身分組；不想讓她 tag 人可設 `TAG_MEMBERS=false`。
+永遠不會 @everyone、@here 或身分組；不想讓她 tag 人可設 `[tag] enabled = false`。
 
 同一成員在同一頻道連發時，漿糖預設等約 0.8 秒，對方每多打一則就再多等一下，最多把四則合成一個回合判斷一次。頻道很熱絡時等待減半，被 @ 時也不會等太久。
 換人發言時會結束前一個回合。每個頻道按順序判斷、生成和送出，回覆確認送出才會進入短期記憶。
@@ -115,8 +115,7 @@ Discord 要在頻道內直接預覽動圖，需要 `Embed Links` 權限。
 
 動圖和關鍵字可在角色設定檔的 `[gifs]` 修改。每個 `stickers` 項目對應一張動圖，包含
 `label`、`keywords` 和公開 HTTPS `.gif` 直連 `url`。命中多張時優先使用較長的關鍵字。
-在 `.env` 可用 `GIFS_ENABLED` 關閉功能，或調整 `GIF_REPLY_PROBABILITY`（預設 12%）
-和 `GIF_COOLDOWN_SECONDS`（同一頻道自動發圖預設至少間隔 90 秒）。
+在 `settings.toml` 的 `[gifs]` 可關閉功能，或調整自動發圖機率與同一頻道的最短間隔。
 
 ## 查看模型狀態
 
@@ -138,7 +137,7 @@ bot 啟動後，用瀏覽器打開 <http://127.0.0.1:8787/> 就能看到：
 
 頁面每 3 秒自動更新，資料只存在記憶體，重啟就清空。預設只聽本機；bot 跑在主機上時，
 用 SSH 通道從自己電腦連：`ssh -L 8787:127.0.0.1:8787 使用者@主機`，再開上面的網址。
-設定見 `.env.example` 的 `DASHBOARD_*`。
+位址在 `settings.toml` 的 `[dashboard]`；要對外開放時請在 `.env` 設 `DASHBOARD_TOKEN`。
 
 ## 管理員指令
 
@@ -158,43 +157,34 @@ bot 啟動後，用瀏覽器打開 <http://127.0.0.1:8787/> 就能看到：
 
 > 語意是**允許清單**:清單為空 = 所有頻道都可以(預設)。一旦清單有內容,就只在清單內
 > 的頻道講話與貼表情。移除最後一個頻道也會回到全部開放。
-> `ALLOWED_CHANNEL_IDS` 是初始值，有存檔後以 `data/channels.json` 為準。
+> `settings.toml` 的 `[channels] allowed_ids` 是初始值，有存檔後以 `data/channels.json` 為準。
 >
 > ⚠️ 斜線指令需要邀請時帶 **`applications.commands`** scope。若指令沒出現,多半是
 > 當初邀請只給了 `bot` scope —— 用含兩個 scope 的網址**重新邀請一次**即可(不會踢掉
 > bot、不會掉資料)。
 
-## 回覆與表情設定
+## 參數設定
 
-下列選項可以在 `.env` 調整，重啟 bot 後生效。
+所有可調的行為參數都在專案根目錄的 [`settings.toml`](settings.toml)，依功能分組、每項都有中文說明，
+改完重啟 bot 生效。`.env` 只放密鑰與模型連線（Discord token、API key、模型名稱）。
 
-| 變數 | 預設 | 作用 |
-|---|---|---|
-| `DECISION_STRATEGY` | `heuristic` | 判斷要不要回的策略:`heuristic`(機率規則,免費)、`llm`(讀氣氛判斷,每則花 token)或 `hybrid`(抽中才問模型) |
-| `REPLY_PROBABILITY` | `0.08` | heuristic 下,一般訊息的基礎插話機率(調高=更愛講話) |
-| `LOOK_PROBABILITY` | `0.3` | hybrid 下,一般訊息交給模型判斷的基礎機率 |
-| `TALK_FATIGUE_HALF_LIFE_SECONDS` | `300` | 話量疲勞的半衰期;講越多越安靜,0 關閉 |
-| `SYNC_NICKNAME` | `true` | 啟動時把 bot 在每個伺服器的暱稱改成角色名(需「變更暱稱」權限) |
-| `LULL_PROBABILITY` | `0.1` | 聊一陣子後冷場時,給她一次開口機會的機率;0 關閉 |
-| `LULL_MIN_SECONDS` / `LULL_MAX_SECONDS` | `120` / `1800` | 安靜多久算冷場的上下限(實際依聊天節奏推算) |
-| `TURN_WINDOW_SECONDS` | `0.8` | 收集同一成員連發的時間，`0` 可關閉合併 |
-| `REPLY_COOLDOWN_SECONDS` | `20` | 同頻道兩次主動回覆的最短間隔,防洗版 |
-| `DECISION_COOLDOWN_SECONDS` | `10` | llm 策略下,每頻道觸發判斷的最短間隔,控 API 成本 |
-| `MAX_CONTEXT_MESSAGES` | `20` | 餵給模型的近期訊息數 |
-| `ALLOWED_CHANNEL_IDS` | (空) | 留空=所有頻道;填逗號分隔的頻道 ID=只在這些頻道互動 |
-| `LLM_TEMPERATURE` | `1.1` | 回覆生成溫度,偏高讓語氣更口語 |
-| `REACTIONS_ENABLED` | `true` | 表情功能總開關 |
-| `REPLY_QUOTE_MODE` | `auto` | 用「回覆」引用對方:`auto` 看情況、`always` 每次、`off` 從不 |
-| `REPLY_QUOTE_PROBABILITY` | `0.25` | auto 下沒人插話時也引用的機率 |
-| `REPLY_QUOTE_PING` | `false` | 引用時要不要通知被回覆的人 |
-| `TAG_MEMBERS` | `true` | 允許她 tag 最近在頻道講過話的人(不會 @everyone/@here/身分組) |
-| `BOT_REPLY_MODE` | `all` | 回覆別的 bot:`off` 只看不回、`mention` 被 @ 或回覆才回、`all` 跟成員一樣判斷 |
-| `BOT_REPLY_MAX` / `BOT_REPLY_WINDOW_SECONDS` | `3` / `600` | 每頻道在這段時間內最多回 bot 幾次,防止 bot 互相接話停不下來 |
-| `SELF_REACTION_PROBABILITY` | `0.2` | 看到訊息時自己貼表情的機率 |
-| `FOLLOW_REACTION_PROBABILITY` | `0.5` | 別人按了表情時跟著按的機率 |
-| `FOLLOW_REACTION_MIN_COUNT` | `2` | 至少幾人按過她才跟(`1`=有人按就可能跟) |
+| 區段 | 內容 |
+|---|---|
+| `[persona]` | 用哪張角色卡、要不要同步伺服器暱稱 |
+| `[reply]` | 判斷策略、插話機率、冷卻、話量疲勞、連發合併、上下文長度、生成溫度 |
+| `[lull]` | 冷場接話的機率與等待時間 |
+| `[bots]` | 回不回別的 bot、連鎖上限 |
+| `[quote]` | 用「回覆」引用對方訊息的方式 |
+| `[tag]` | 能不能 tag 人 |
+| `[reactions]` / `[gifs]` | 表情與動圖 |
+| `[channels]` | 允許互動的頻道（初始值） |
+| `[dashboard]` / `[log]` | 網頁後台位址、log 等級 |
 
-> 完整變數說明見 [`.env.example`](.env.example)。
+設定值打錯（例如機率填 1.5、拼錯鍵名）時，bot 啟動會直接報錯並指出是哪一項。
+
+`.env` 也能用環境變數覆蓋 `settings.toml` 的任何一項，例如 `REPLY_PROBABILITY=0.5`，
+方便在主機上臨時調整；有覆蓋時啟動 log 會出現警告。變數名稱對照見
+[`src/syrupbot/config.py`](src/syrupbot/config.py) 的 `_ITEMS`。
 
 ## 自訂人設
 

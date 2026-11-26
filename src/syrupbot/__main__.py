@@ -26,6 +26,8 @@ def main() -> None:
         level=config.log_level,
         format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
     )
+    for warning in config.overrides:
+        logging.getLogger(__name__).warning("%s(以環境變數為準)", warning)
 
     # 由下而上組裝各層,再注入到 bot。
     persona = Persona.load(config.persona)

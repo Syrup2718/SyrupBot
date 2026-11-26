@@ -58,7 +58,9 @@ discord 事件
 
 各模組職責:
 
-- **`config.py`** — 唯一設定來源。所有環境變數啟動時讀進 frozen `Config` 並驗證。
+- **`config.py`** — 唯一設定來源。行為參數放專案根目錄的 `settings.toml`(會進 git),
+  密鑰與模型連線放 `.env`/`llm.local.env`;啟動時合併成 frozen `Config` 並驗證
+  (環境變數 > settings.toml > 預設)。新參數加進 `_ITEMS` 表與 `settings.toml`。
   其他模組一律接收 `Config`,不自己讀 `os.environ`。
 
 - **`bot.py`** — Discord 接線層,**刻意做薄**。只負責抽訊息、呼叫 pipeline、
@@ -124,14 +126,14 @@ discord 事件
 - **`personas/*.toml`** — 角色設定,與程式碼分離。改人設只編輯 TOML;多角色就多開檔、
   把 `PERSONA` 指過去。
 
-## 行為調校的旋鈕(環境變數)
+## 行為調校的旋鈕(settings.toml)
 
-- `DECISION_STRATEGY`:`heuristic`(預設,省成本)、`llm`(更聰明、每則都花)或
+- `[reply] strategy`:`heuristic`(預設,省成本)、`llm`(更聰明、每則都花)或
   `hybrid`(抽中才問模型,兼顧兩者)。**三種都已實作,翻開關即切換**。
-- `REPLY_PROBABILITY`:heuristic 的基礎插話機率。想讓它更愛講話就調高。
-- `REPLY_COOLDOWN_SECONDS` / `DECISION_COOLDOWN_SECONDS`:防洗版 / 控 API 成本。
-- `ALLOWED_CHANNEL_IDS`:留空=所有頻道;填 ID=只在指定頻道互動。
-- `LLM_TEMPERATURE`:回覆生成溫度,偏高(預設 1.1)讓語氣更口語。
+- `[reply] probability`:heuristic 的基礎插話機率。想讓它更愛講話就調高。
+- `[reply] cooldown_seconds` / `decision_cooldown_seconds`:防洗版 / 控 API 成本。
+- `[channels] allowed_ids`:留空=所有頻道;填 ID=只在指定頻道互動。
+- `[reply] temperature`:回覆生成溫度,偏高(預設 1.1)讓語氣更口語。
 
 ## 慣例與擴充原則
 

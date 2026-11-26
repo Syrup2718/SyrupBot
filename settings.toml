@@ -1,0 +1,94 @@
+# SyrupBot 行為設定
+#
+# 所有可調的參數都在這裡，改完重啟 bot 生效。
+# 密鑰與模型連線（Discord token、API key、模型名稱、llama.cpp）放在 .env / llm.local.env，不放這裡。
+#
+# 同一個參數如果 .env 也有設，會以 .env 為準，啟動時 log 會出現警告。
+# 機率都是 0~1 之間的小數（0.3 = 30%），時間單位都是秒。
+
+[persona]
+# 使用哪張角色卡，對應 personas/<name>.toml（syrup＝漿糖、kokuto＝黑糖）
+name = "kokuto"
+# 啟動時把 bot 在每個伺服器的暱稱改成角色名（需要「變更暱稱」權限）
+sync_nickname = true
+
+[reply]
+# 判斷要不要插話的方式：
+#   heuristic＝機率規則（免費）、llm＝每則都讓模型判斷、hybrid＝先用機率決定要不要看，抽中才問模型
+strategy = "heuristic"
+# heuristic 的基礎插話機率；有問號、提到名字、興趣話題會再加分
+probability = 0.7
+# hybrid 時，一般訊息交給模型判斷的基礎機率
+look_probability = 0.3
+# 兩次主動插話的最短間隔（被 @、被回覆不受限制）
+cooldown_seconds = 1
+# llm / hybrid 時，每個頻道兩次模型判斷的最短間隔（控制 API 費用）
+decision_cooldown_seconds = 1
+# 話量疲勞半衰期：每回一次疲勞 +1、每過這麼久減半，講越多越少主動插話；0＝關閉
+fatigue_half_life_seconds = 30
+# 同一人連發時，等多久把幾則合成一次回覆；0＝不合併
+turn_window_seconds = 0.8
+# 給模型看的近期訊息數
+max_context_messages = 20
+# 回覆生成溫度，越高越口語、越多變化
+temperature = 1.1
+
+[lull]
+# 大家聊一陣子後安靜太久，給她一次主動開口機會的機率；0＝關閉
+probability = 0.1
+# 安靜多久算冷場：依聊天節奏推算，再限制在這個範圍內
+min_seconds = 10
+max_seconds = 60
+
+[bots]
+# 回覆別的 bot：off＝只看不回、mention＝被 @ 或回覆才回、all＝跟成員一樣判斷
+reply_mode = "all"
+# 防止兩個 bot 互相接話停不下來：每個頻道在 reply_window_seconds 內最多回 bot 幾次
+reply_max = 20
+reply_window_seconds = 60
+
+[quote]
+# 用 Discord「回覆」引用對方訊息：auto＝看情況、always＝每次、off＝從不
+mode = "auto"
+# auto 時，沒人插話也偶爾引用的機率
+probability = 0.25
+# 引用時要不要通知被回覆的人
+ping = false
+
+[tag]
+# 允許她 tag 最近在頻道講過話的人（永遠不會 @everyone、@here 或身分組）
+enabled = true
+
+[reactions]
+# 表情功能總開關
+enabled = true
+# 看到訊息時自己貼表情的機率（表情清單在角色卡的 [reactions]）
+self_probability = 0.2
+# 別人按了表情時跟著按的機率
+follow_probability = 0.5
+# 至少要有幾個人按過同一個表情，她才會跟著按
+follow_min_count = 2
+
+[gifs]
+# 動圖功能總開關（動圖清單在角色卡的 [gifs]）
+enabled = true
+# 命中動圖關鍵字時，自動發一張的機率
+reply_probability = 0.12
+# 同一頻道兩次自動發動圖的最短間隔
+cooldown_seconds = 30
+
+[channels]
+# 可以互動的頻道 ID 清單；空的＝所有看得到的頻道。例：allowed_ids = [123456789012345678]
+# 這是初始值，管理員用 /set 指令調整後會存到 policy_path 並以那份為準
+allowed_ids = []
+policy_path = "data/channels.json"
+
+[dashboard]
+# 網頁後台：瀏覽器開 http://127.0.0.1:8787/；port = 0 關閉
+# 只想讓本機連就維持 127.0.0.1。要對外開放時請在 .env 設 DASHBOARD_TOKEN
+host = "127.0.0.1"
+port = 8787
+
+[log]
+# DEBUG / INFO / WARNING / ERROR
+level = "INFO"

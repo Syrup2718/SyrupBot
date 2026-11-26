@@ -44,8 +44,8 @@ python -m pytest tests/test_decision.py::test_always_replies_when_mentioned -q
 ```
 
 不要在測試或提交內容中使用真實 Discord token、DeepSeek key，或呼叫真實外部服務。
-本機 `.env` 和 `llm.local.env` 可能含敏感資料。新增設定時更新 `.env.example` 或
-`llm.local.env.example` 與相關文件。兩份範本只放占位值與可分享的預設值。
+本機 `.env` 和 `llm.local.env` 可能含敏感資料，只放密鑰與模型連線設定；兩份範本只放占位值。
+行為參數一律放在 `settings.toml`（會進 git，不可放密鑰）。
 
 ## 架構與資料流
 
@@ -103,8 +103,9 @@ Discord event
 - Bot 的發言與 reply cooldown 在 Discord 成功送出後更新。部分送出時只記錄已送達的段落。
 - 表情決策與文字回覆決策彼此獨立，因此允許只貼表情、只回話、兩者都做或都不做。
 - 頻道政策是 allowlist：空集合代表所有頻道開放；非空時只有列出的頻道可互動。
-- `data/channels.json` 若存在，會覆蓋 `ALLOWED_CHANNEL_IDS` 的啟動初始值。不要反轉此優先序。
-- 設定優先序為程序環境變數、`llm.local.env`、`.env`。設定檔與角色 TOML 改動需重啟才生效。
+- `data/channels.json` 若存在，會覆蓋 `[channels] allowed_ids` 的啟動初始值。不要反轉此優先序。
+- 設定優先序為程序環境變數、`llm.local.env`、`.env`，再來才是 `settings.toml`，最後是程式預設；
+  環境變數蓋掉 `settings.toml` 時會在啟動 log 警告。設定檔與角色 TOML 改動需重啟才生效。
 - LLM 判斷 JSON 無法解析時要保守地不回覆，不要猜測或直接放行。
 
 ## 修改原則
@@ -114,7 +115,8 @@ Discord event
 - 第三方 SDK 應包在專案自己的隔離層後面；不要讓核心流程直接依賴 SDK 物件。
 - 涉及機率或時間的行為要保留可注入的 `rng`／`clock`，讓測試可重現。
 - 新增 `Config` 欄位時，考慮為其提供預設值，以免既有測試中的 `Config(...)` 建構失效；
-  同時補上解析、驗證、`.env.example` 與測試。
+  可調的行為參數加進 `config.py` 的 `_ITEMS` 表與 `settings.toml`（附中文說明），並補測試；
+  只有密鑰或模型連線設定才放 `.env.example`。
 - 新增 persona 欄位時，盡量對缺省 TOML 值保持向後相容，並更新載入與 prompt 測試。
 - 修改管理員斜線指令時，保留 `manage_guild` 權限限制與 ephemeral 回應。
 - 不要為了新功能讓 `bot.py` 變成業務邏輯中心；先考慮新增純邏輯模組並由 pipeline 編排。
