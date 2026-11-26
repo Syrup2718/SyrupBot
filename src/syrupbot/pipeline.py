@@ -91,6 +91,16 @@ class ChatPipeline:
     def can_merge(self, msg: IncomingMessage) -> bool:
         return not msg.addresses_others and self._decision.skip_reason(msg) is None
 
+    def should_quote(self, msg: IncomingMessage, *, interrupted: bool) -> bool:
+        """送出時要不要引用回覆 msg(interrupted:之後有別人插話)。"""
+        return self._decision.should_quote(msg, interrupted=interrupted)
+
+    def lull_target(self, channel_id: int) -> IncomingMessage:
+        """冷場開口時她接的是最後一則訊息;引用回覆時用它當目標。"""
+        history = self._context.messages(channel_id)
+        last_id = history[-1].message_id if history and not history[-1].is_self else None
+        return lull_message(channel_id, last_id)
+
     def bot_block_reason(self, msg: IncomingMessage) -> str | None:
         """別的 bot 的這則訊息不能回的原因;可以走一般判斷時回傳 None。"""
         return self._decision.bot_block_reason(msg)
@@ -321,6 +331,9 @@ class ChatPipeline:
         return self._reaction.follow_min_count
 
 
-def lull_message(channel_id: int) -> IncomingMessage:
-    """冷場開口沒有觸發訊息,用一則空白訊息代表,送出後不會進入接話模式。"""
-    return IncomingMessage(channel_id, "", "", False, False, False)
+def lull_message(channel_id: int, message_id: int | None = None) -> IncomingMessage:
+    """冷場開口沒有觸發訊息,用一則空白訊息代表,送出後不會進入接話模式。
+
+    message_id 是她接話的那則訊息,送出時可能被引用回覆。
+    """
+    return IncomingMessage(channel_id, "", "", False, False, False, message_id=message_id)

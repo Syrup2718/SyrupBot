@@ -46,6 +46,7 @@ def main() -> None:
     bot = SyrupBot(
         pipeline, policy, turn_window_seconds=config.turn_window_seconds,
         nickname=persona.name if config.sync_nickname else None,
+        quote_ping=config.reply_quote_ping,
         dashboard=(
             Dashboard(config.dashboard_host, config.dashboard_port, config.dashboard_token)
             if config.dashboard_port

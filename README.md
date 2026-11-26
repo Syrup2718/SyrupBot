@@ -86,6 +86,10 @@ if (-not (Test-Path llm.local.env)) {
 互相接話停不下來，每個頻道 10 分鐘內最多回 bot 3 次；只想在被 bot @ 時回可設 `mention`，
 完全不回設 `off`。她不會對 bot 的訊息貼表情。
 
+她回話時會像真人一樣看情況用 Discord 的「回覆」引用對方訊息：中間有別人插話、或對方本來就是
+在回覆她時一定引用，其他時候偶爾引用（`REPLY_QUOTE_MODE`）。冷場接話時引用的是她接的那則。
+預設不會因引用而通知對方（`REPLY_QUOTE_PING`）。
+
 同一成員在同一頻道連發時，漿糖預設等約 0.8 秒，對方每多打一則就再多等一下，最多把四則合成一個回合判斷一次。頻道很熱絡時等待減半，被 @ 時也不會等太久。
 換人發言時會結束前一個回合。每個頻道按順序判斷、生成和送出，回覆確認送出才會進入短期記憶。
 
@@ -177,6 +181,9 @@ bot 啟動後，用瀏覽器打開 <http://127.0.0.1:8787/> 就能看到：
 | `ALLOWED_CHANNEL_IDS` | (空) | 留空=所有頻道;填逗號分隔的頻道 ID=只在這些頻道互動 |
 | `LLM_TEMPERATURE` | `1.1` | 回覆生成溫度,偏高讓語氣更口語 |
 | `REACTIONS_ENABLED` | `true` | 表情功能總開關 |
+| `REPLY_QUOTE_MODE` | `auto` | 用「回覆」引用對方:`auto` 看情況、`always` 每次、`off` 從不 |
+| `REPLY_QUOTE_PROBABILITY` | `0.25` | auto 下沒人插話時也引用的機率 |
+| `REPLY_QUOTE_PING` | `false` | 引用時要不要通知被回覆的人 |
 | `BOT_REPLY_MODE` | `all` | 回覆別的 bot:`off` 只看不回、`mention` 被 @ 或回覆才回、`all` 跟成員一樣判斷 |
 | `BOT_REPLY_MAX` / `BOT_REPLY_WINDOW_SECONDS` | `3` / `600` | 每頻道在這段時間內最多回 bot 幾次,防止 bot 互相接話停不下來 |
 | `SELF_REACTION_PROBABILITY` | `0.2` | 看到訊息時自己貼表情的機率 |

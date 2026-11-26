@@ -14,7 +14,7 @@ from syrupbot.channels import ChannelPolicy
 from syrupbot.context import ConversationStore
 from syrupbot.decision import IncomingMessage, ReplyDecision
 from syrupbot.persona import Persona
-from syrupbot.pipeline import ChatPipeline
+from syrupbot.pipeline import ChatPipeline, PipelineResult
 
 _OLD_REPLY = "哪有 誰叫你傻逼啦！\n是我剛才太笨把話忘光光嘛！\n那、那現在算帳囉～"
 _REPLAY = f"{_OLD_REPLY}\n\n漿:我跳驗你\n漿糖：你隨便驗唄～\n漿:我討厭你"
@@ -322,3 +322,41 @@ async def test_answerable_bot_message_goes_through_reply_flow(setup_pipeline, mo
     decision.decide.assert_awaited_once()
     channel.send.assert_awaited_once_with("那首我也喜歡")
     decision.record_bot_reply.assert_called_once_with(1)
+
+
+async def test_first_chunk_quotes_target_when_someone_interrupted(setup_pipeline, monkeypatch):
+    import discord
+
+    pipeline, context, decision, _ = setup_pipeline
+    decision.should_quote.return_value = True
+    bot = SyrupBot(pipeline, ChannelPolicy())
+    monkeypatch.setattr(bot_module, "_TYPING_SECONDS_PER_CHAR", 0)
+    monkeypatch.setattr(bot_module, "_TYPING_MIN_SECONDS", 0)
+    monkeypatch.setattr(bot_module, "_NEXT_CHUNK_DELAY", 0)
+
+    @asynccontextmanager
+    async def typing():
+        yield
+
+    channel = SimpleNamespace(id=1, typing=typing, send=AsyncMock())
+    target = replace(_INCOMING, message_id=100)
+    bot._note_latest(target)
+    bot._note_latest(replace(_INCOMING, message_id=101))  # 有人插話
+    result = PipelineResult(replies=["第一段", "第二段"], context_revision=0)
+    await bot._send_replies(channel, target, result)
+
+    assert decision.should_quote.call_args.kwargs == {"interrupted": True}
+    first, second = channel.send.await_args_list
+    reference = first.kwargs["reference"]
+    assert isinstance(reference, discord.MessageReference)
+    assert reference.message_id == 100
+    assert first.kwargs["allowed_mentions"].replied_user is False
+    assert second.args == ("第二段",) and "reference" not in second.kwargs
+
+
+def test_lull_target_points_at_last_message_from_others(setup_pipeline):
+    pipeline, context, _, _ = setup_pipeline
+    context.add(1, "小明", "有人在嗎", is_self=False, message_id=77)
+    assert pipeline.lull_target(1).message_id == 77
+    context.add(1, "漿糖", "我在", is_self=True)
+    assert pipeline.lull_target(1).message_id is None

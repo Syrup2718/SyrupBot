@@ -16,7 +16,7 @@ from .channels import ChannelPolicy
 from .config import DEFAULT_TURN_WINDOW_SECONDS
 from .dashboard import Dashboard
 from .decision import IncomingMessage
-from .pipeline import ChatPipeline, LLMStatus, PipelineResult, lull_message
+from .pipeline import ChatPipeline, LLMStatus, PipelineResult
 from .turns import PendingTurn, TurnScheduler
 
 logger = logging.getLogger(__name__)
@@ -138,6 +138,7 @@ class SyrupBot(discord.Client):
         *, turn_window_seconds: float = DEFAULT_TURN_WINDOW_SECONDS,
         nickname: str | None = None,
         dashboard: Dashboard | None = None,
+        quote_ping: bool = False,
     ) -> None:
         intents = discord.Intents.default()
         # message_content 是特權 intent,需在 Developer Portal 開啟,
@@ -152,8 +153,12 @@ class SyrupBot(discord.Client):
         # 每個伺服器要顯示的暱稱(通常是角色名);None 代表不動暱稱。
         self._nickname = nickname
         self._dashboard = dashboard
+        # 引用回覆時要不要通知(@)被回覆的人。
+        self._quote_ping = quote_ping
         self._turn_locks: dict[int, asyncio.Lock] = {}
         self._lull_waits: dict[int, asyncio.Task[None]] = {}
+        # 每頻道最新一則別人的訊息 ID,用來判斷回覆前有沒有人插話。
+        self._latest_message: dict[int, int] = {}
         self.tree = app_commands.CommandTree(self)
         self._synced = False
         self._register_commands()
@@ -320,11 +325,13 @@ class SyrupBot(discord.Client):
             if self.user is not None and message.author.id == self.user.id:
                 return
             incoming = self._to_incoming(message)
+            self._note_latest(incoming)
             if reason := self._pipeline.bot_block_reason(incoming):
                 self._pipeline.observe(incoming, note=reason)
                 return
         else:
             incoming = self._to_incoming(message)
+            self._note_latest(incoming)
             self._schedule_lull(message.channel, incoming)
         turn = self._turns.submit(
             incoming, self._pipeline.context_revision(incoming.channel_id),
@@ -397,7 +404,8 @@ class SyrupBot(discord.Client):
             async with lock:
                 result = await self._pipeline.handle_lull(channel_id, revision)
                 if result.replies:
-                    await self._send_replies(channel, lull_message(channel_id), result)
+                    target = self._pipeline.lull_target(channel_id)
+                    await self._send_replies(channel, target, result)
         except Exception:  # noqa: BLE001 — 冷場開口失敗不影響其他流程。
             logger.exception("頻道 %s 冷場開口時發生錯誤", channel_id)
 
@@ -488,6 +496,23 @@ class SyrupBot(discord.Client):
             return resolved.author == self.user
         return False
 
+    def _note_latest(self, msg: IncomingMessage) -> None:
+        if msg.message_id is not None:
+            self._latest_message[msg.channel_id] = msg.message_id
+
+    def _quote_reference(self, msg: IncomingMessage) -> discord.MessageReference | None:
+        """決定這次回覆要不要引用 msg;要的話回傳引用目標。"""
+        if msg.message_id is None:
+            return None
+        interrupted = self._latest_message.get(msg.channel_id) != msg.message_id
+        if not self._pipeline.should_quote(msg, interrupted=interrupted):
+            return None
+        # 對方刪掉原訊息時改成一般訊息送出,不要整則失敗。
+        return discord.MessageReference(
+            message_id=msg.message_id, channel_id=msg.channel_id,
+            fail_if_not_exists=False,
+        )
+
     async def _send_replies(
         self, channel: discord.abc.Messageable, msg: IncomingMessage, result: PipelineResult
     ) -> None:
@@ -503,13 +528,23 @@ class SyrupBot(discord.Client):
                 await asyncio.sleep(delay)
         sent: list[str] = []
         gif_sent = False
+        reference = self._quote_reference(msg)
         try:
             for chunk in result.replies:
                 if sent:
                     await asyncio.sleep(_NEXT_CHUNK_DELAY)
                 if not self._pipeline.is_current_reply(msg.channel_id, result):
                     return
-                await channel.send(chunk)
+                if reference is not None and not sent:
+                    # 只有第一段用「回覆」引用,後面幾段照常接著打。
+                    await channel.send(
+                        chunk, reference=reference,
+                        allowed_mentions=discord.AllowedMentions(
+                            replied_user=self._quote_ping
+                        ),
+                    )
+                else:
+                    await channel.send(chunk)
                 sent.append(chunk)
 
             if result.gif is not None:

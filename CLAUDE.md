@@ -82,6 +82,8 @@ discord 事件
       抽中才走 llm 判斷。參考 MaiBot「查看頻率 ≠ 回覆頻率」的設計。
   - **話量疲勞**:每次回覆疲勞 +1、依 `TALK_FATIGUE_HALF_LIFE_SECONDS` 衰減,
     主動插話機率乘上 `1/(1+疲勞)`;捷徑(@、reply、接話)不受影響。
+  - **引用回覆**:`should_quote` 決定第一段要不要用 Discord「回覆」引用目標訊息
+    (`REPLY_QUOTE_MODE`);`bot.py` 記錄每頻道最新訊息 ID 來判斷中間有沒有人插話。
   - Discord 成功送出後，pipeline 才記錄已送達的文字、更新一般冷卻，並開始等待原發話者接話。
 
 - **`persona.py`** — 從 `personas/<PERSONA>.toml` 載入角色,組出 system prompt

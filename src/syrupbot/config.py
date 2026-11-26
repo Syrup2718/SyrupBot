@@ -80,6 +80,10 @@ class Config:
     # 防止 bot 互相接話停不下來:每頻道在這段時間內最多回 bot 幾次。
     bot_reply_max: int = 3
     bot_reply_window_seconds: float = 600.0
+    # 用 Discord「回覆」引用對方訊息:auto(看情況)、always、off。
+    reply_quote_mode: str = "auto"
+    reply_quote_probability: float = 0.25  # auto 時,沒人插話也偶爾引用的機率
+    reply_quote_ping: bool = False  # 引用時要不要通知對方
     # 網頁後台:port 0 代表關閉;預設只聽本機。
     dashboard_host: str = "127.0.0.1"
     dashboard_port: int = 8787
@@ -151,6 +155,14 @@ class Config:
         bot_reply_window = float(os.environ.get("BOT_REPLY_WINDOW_SECONDS", "600"))
         if bot_reply_max < 0 or not math.isfinite(bot_reply_window) or bot_reply_window < 0:
             raise ValueError("BOT_REPLY_MAX 與 BOT_REPLY_WINDOW_SECONDS 必須是非負數")
+        quote_mode = os.environ.get("REPLY_QUOTE_MODE", "auto").lower()
+        if quote_mode not in ("auto", "always", "off"):
+            raise RuntimeError(
+                f"REPLY_QUOTE_MODE 必須是 'auto'、'always' 或 'off',收到:{quote_mode!r}"
+            )
+        quote_probability = float(os.environ.get("REPLY_QUOTE_PROBABILITY", "0.25"))
+        if not 0 <= quote_probability <= 1:
+            raise ValueError("REPLY_QUOTE_PROBABILITY 必須介於 0 和 1")
         return cls(
             discord_token=os.environ["DISCORD_TOKEN"],
             deepseek_api_key=os.environ["DEEPSEEK_API_KEY"],
@@ -206,6 +218,9 @@ class Config:
             bot_reply_mode=bot_reply_mode,
             bot_reply_max=bot_reply_max,
             bot_reply_window_seconds=bot_reply_window,
+            reply_quote_mode=quote_mode,
+            reply_quote_probability=quote_probability,
+            reply_quote_ping=_parse_bool(os.environ.get("REPLY_QUOTE_PING", "false")),
             dashboard_host=os.environ.get("DASHBOARD_HOST", "127.0.0.1"),
             dashboard_port=int(os.environ.get("DASHBOARD_PORT", "8787")),
             dashboard_token=os.environ.get("DASHBOARD_TOKEN", ""),

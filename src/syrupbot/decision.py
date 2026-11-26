@@ -277,6 +277,21 @@ class DecisionEngine:
         """回覆了別的 bot,計入防連鎖上限。"""
         self._bot_replies.setdefault(channel_id, []).append(self._clock())
 
+    def should_quote(self, msg: IncomingMessage, *, interrupted: bool) -> bool:
+        """送出時要不要用 Discord 的「回覆」引用對方那則訊息。
+
+        auto 模式像真人:中間有別人插話(不引用會看不出在回誰)、或對方本來就是
+        在回覆她時一定引用;其他時候偶爾引用。
+        """
+        if msg.message_id is None:
+            return False
+        mode = self._config.reply_quote_mode
+        if mode == "off":
+            return False
+        if mode == "always" or interrupted or msg.is_reply_to_bot:
+            return True
+        return self._rng.random() < self._config.reply_quote_probability
+
     def channel_allowed(self, channel_id: int) -> bool:
         """這個頻道是否在漿糖可互動的範圍內。"""
         return self._policy.is_allowed(channel_id)

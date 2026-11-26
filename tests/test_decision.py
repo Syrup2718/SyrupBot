@@ -403,3 +403,25 @@ async def test_llm_strategy_skips_judge_when_fatigued() -> None:
     engine.record_reply(1)  # 倍率 0.5 < 擲骰 0.6
     assert (await engine.decide(_msg())).should_reply is False
     assert llm.judge_calls == 0
+
+
+# ── 引用回覆 ──
+
+
+def test_quote_auto_mode_rules() -> None:
+    msg = _msg(message_id=10)
+    never, _ = _engine(_base_config(reply_quote_probability=0.0), rng=_FixedRandom(0.5))
+    assert never.should_quote(msg, interrupted=True) is True  # 有人插話一定引用
+    assert never.should_quote(replace(msg, is_reply_to_bot=True), interrupted=False)
+    assert never.should_quote(msg, interrupted=False) is False
+    sometimes, _ = _engine(_base_config(reply_quote_probability=0.6), rng=_FixedRandom(0.5))
+    assert sometimes.should_quote(msg, interrupted=False) is True
+
+
+def test_quote_off_always_and_missing_id() -> None:
+    msg = _msg(message_id=10)
+    off, _ = _engine(_base_config(reply_quote_mode="off"))
+    assert off.should_quote(msg, interrupted=True) is False
+    always, _ = _engine(_base_config(reply_quote_mode="always"), rng=_FixedRandom(0.99))
+    assert always.should_quote(msg, interrupted=False) is True
+    assert always.should_quote(_msg(), interrupted=True) is False  # 沒有訊息 ID 無從引用
