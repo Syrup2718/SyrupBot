@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import tomllib
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 from urllib.parse import urlsplit
@@ -48,6 +49,12 @@ def _is_gif_url(url: str) -> bool:
     )
 
 
+def _probability(value: object) -> float:
+    if isinstance(value, bool) or not isinstance(value, int | float) or not 0 <= value <= 1:
+        raise ValueError("alt_style_probability 必須是 0 到 1 之間的數字")
+    return float(value)
+
+
 @dataclass(frozen=True)
 class Persona:
     """一個角色的完整設定。"""
@@ -66,6 +73,9 @@ class Persona:
     reaction_emojis: tuple[str, ...] = ()
     _system_prompt: str = field(default="", compare=False)
     gif_themes: tuple[GifTheme, ...] = ()
+    # 備用表達風格:每次回覆有一定機率抽一個,只影響那一次(參考 MaiBot)。
+    alt_styles: tuple[str, ...] = ()
+    alt_style_probability: float = 0.0
 
     @classmethod
     def load(cls, name: str) -> "Persona":
@@ -115,6 +125,8 @@ class Persona:
             reaction_keywords=reaction_keywords,
             reaction_emojis=reaction_emojis,
             gif_themes=tuple(gif_themes),
+            alt_styles=tuple(data.get("alt_styles", [])),
+            alt_style_probability=_probability(data.get("alt_style_probability", 0.0)),
         )
 
     @property
@@ -153,6 +165,13 @@ class Persona:
             "看情況回一兩句就好,不用什麼都解釋。"
         )
         return "\n\n".join(parts)
+
+    def prompt_for_turn(self, random: Callable[[], float]) -> str:
+        """取得這一次回覆用的 system prompt,可能附上一個隨機的備用風格。"""
+        if not self.alt_styles or random() >= self.alt_style_probability:
+            return self.system_prompt
+        style = self.alt_styles[int(random() * len(self.alt_styles)) % len(self.alt_styles)]
+        return f"{self.system_prompt}\n\n只限這一次回覆:{style}"
 
     def mentioned_by_name(self, text: str) -> bool:
         """文字裡是否有人用名字或暱稱在叫這個角色。"""

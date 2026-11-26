@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import logging
+from random import Random
 from dataclasses import dataclass, field, replace
 
 from .context import ConversationStore
@@ -54,6 +55,7 @@ class ChatPipeline:
         llm: LLMClient,
         reaction: ReactionEngine,
         gifs: GifPicker | None = None,
+        rng: Random | None = None,
     ) -> None:
         self._persona = persona
         self._context = context
@@ -61,6 +63,7 @@ class ChatPipeline:
         self._llm = llm
         self._reaction = reaction
         self._gifs = gifs
+        self._rng = rng or Random()
 
     async def handle(self, msg: IncomingMessage) -> PipelineResult:
         """在沒有回合收集器時，規劃單則訊息的表情與回覆。"""
@@ -115,7 +118,7 @@ class ChatPipeline:
         else:
             transcript = self._context.transcript(msg.channel_id, self._persona.name)
             raw_reply = await self._llm.generate_reply(
-                self._persona.system_prompt, transcript, channel_id=msg.channel_id,
+                self._persona.prompt_for_turn(self._rng.random), transcript, channel_id=msg.channel_id,
                 latest_message=(msg.author, msg.content),
             )
 

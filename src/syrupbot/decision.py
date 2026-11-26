@@ -174,7 +174,8 @@ class DecisionEngine:
 
         transcript = self._context.transcript(msg.channel_id, self._persona.name)
         should_reply, reply = await self._llm.judge_and_reply(
-            self._persona.system_prompt, transcript, channel_id=msg.channel_id,
+            self._persona.prompt_for_turn(self._rng.random), transcript,
+            channel_id=msg.channel_id,
             latest_message=(msg.author, msg.content),
         )
         if should_reply:
