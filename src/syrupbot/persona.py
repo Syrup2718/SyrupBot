@@ -49,6 +49,23 @@ def _is_gif_url(url: str) -> bool:
     )
 
 
+# 岔題檔位:角色多容易被對話裡的支線細節勾走(參考 MaiBot 的 attention drift)。
+DRIFT_RULES = {
+    "subtle": "你很少岔題。只有最近的訊息裡剛好有很自然的梗時，才順口帶一句，大多時候專心接現在的話題。",
+    "active": "你會主動抓對話裡新鮮、好笑或有反差的小細節接話，但回覆仍要短，而且看得出是在回哪一句。",
+    "scattered": "你常被支線、關鍵字或熟人的語氣勾走，可以先接那個點再繞回正題；一則回覆裡最多拐一次彎。",
+    "wild": "你注意力很跳，可以先被最有趣的細節帶走、突然冒出聯想；但有人明確問你問題時一定要回答，且一則回覆最多跳一次。",
+}
+
+
+def _drift(value: object) -> str:
+    if value in ("", None):
+        return ""
+    if value not in DRIFT_RULES:
+        raise ValueError(f"drift 必須是 {', '.join(DRIFT_RULES)} 其中之一,收到:{value!r}")
+    return str(value)
+
+
 def _probability(value: object) -> float:
     if isinstance(value, bool) or not isinstance(value, int | float) or not 0 <= value <= 1:
         raise ValueError("alt_style_probability 必須是 0 到 1 之間的數字")
@@ -76,6 +93,9 @@ class Persona:
     # 備用表達風格:每次回覆有一定機率抽一個,只影響那一次(參考 MaiBot)。
     alt_styles: tuple[str, ...] = ()
     alt_style_probability: float = 0.0
+    # 行為風格:什麼時候加入對話、什麼時候安靜。只給「要不要開口」的判斷用。
+    behavior: str = ""
+    drift: str = ""
 
     @classmethod
     def load(cls, name: str) -> "Persona":
@@ -127,6 +147,8 @@ class Persona:
             gif_themes=tuple(gif_themes),
             alt_styles=tuple(data.get("alt_styles", [])),
             alt_style_probability=_probability(data.get("alt_style_probability", 0.0)),
+            behavior=data.get("behavior", "").strip(),
+            drift=_drift(data.get("drift", "")),
         )
 
     @property
@@ -147,6 +169,9 @@ class Persona:
                 f"你可以偶爾用這些語助詞讓語氣更可愛自然:{particles};"
                 "但不要每句都用,自然就好,太多會很刻意、很假。"
             )
+
+        if self.drift:
+            parts.append(DRIFT_RULES[self.drift])
 
         if self.examples:
             lines = ["你平常聊天的感覺(範例,模仿這個語氣和長度):"]
@@ -172,6 +197,13 @@ class Persona:
             return self.system_prompt
         style = self.alt_styles[int(random() * len(self.alt_styles)) % len(self.alt_styles)]
         return f"{self.system_prompt}\n\n只限這一次回覆:{style}"
+
+    def judge_prompt_for_turn(self, random: Callable[[], float]) -> str:
+        """給「要不要開口」判斷用的 prompt:一般 prompt 再加上行為風格。"""
+        prompt = self.prompt_for_turn(random)
+        if not self.behavior:
+            return prompt
+        return f"{prompt}\n\n你決定要不要開口的原則:\n{self.behavior}"
 
     def mentioned_by_name(self, text: str) -> bool:
         """文字裡是否有人用名字或暱稱在叫這個角色。"""

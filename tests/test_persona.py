@@ -59,3 +59,31 @@ def test_prompt_for_turn_adds_alt_style_only_when_rolled() -> None:
 def test_persona_without_alt_styles_keeps_base_prompt() -> None:
     persona = Persona.load("syrup")
     assert persona.prompt_for_turn(lambda: 0.0) == persona.system_prompt
+
+
+def test_behavior_only_in_judge_prompt() -> None:
+    persona = Persona.load("kokuto")
+    assert persona.behavior
+    no_alt = lambda: 0.99  # noqa: E731 — 不觸發備用風格
+    assert persona.behavior not in persona.prompt_for_turn(no_alt)
+    judge = persona.judge_prompt_for_turn(no_alt)
+    assert judge.startswith(persona.prompt_for_turn(no_alt))
+    assert persona.behavior in judge
+
+
+def test_drift_rule_goes_into_system_prompt() -> None:
+    from syrupbot.persona import DRIFT_RULES
+
+    syrup = Persona.load("syrup")
+    assert syrup.drift == "active"
+    assert DRIFT_RULES["active"] in syrup.system_prompt
+
+
+def test_invalid_drift_is_rejected() -> None:
+    import pytest
+
+    from syrupbot.persona import _drift
+
+    with pytest.raises(ValueError):
+        _drift("chaos")
+    assert _drift("") == ""

@@ -85,7 +85,10 @@ discord 事件
 
 - **`persona.py`** — 從 `personas/<PERSONA>.toml` 載入角色,組出 system prompt
   (身分+個性+說話守則+語助詞「適量」指示+few-shot 範例+禁則)。few-shot 是讓
-  它「像那個角色」最有效的手段。
+  它「像那個角色」最有效的手段。另有幾個選填欄位(參考 MaiBot):`behavior`
+  (何時開口,只放進 llm/hybrid 的判斷 prompt)、`drift`(岔題檔位
+  subtle/active/scattered/wild)、`alt_styles` + `alt_style_probability`
+  (偶爾臨時換一種說話風格)。
 
 - **`llm.py`** — LLM 供應商隔離層，集中處理 OpenAI 相容 API 的請求。
   `generate_reply`(heuristic 路徑:已決定要回,只生成);`judge_and_reply`
