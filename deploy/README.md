@@ -76,3 +76,13 @@ sudo systemctl stop syrupbot         # 停止
 
 > 改了 `personas/*.toml`、`.env` 或 `llm.local.env` 後，要 `systemctl restart syrupbot` 才會生效。
 > 更新程式：`git pull` 後一樣 `restart`。
+
+### 看網頁後台
+
+後台只聽主機本機的 8787 埠，從自己的電腦開 SSH 通道：
+
+```bash
+ssh -L 8787:127.0.0.1:8787 使用者@主機
+```
+
+連上後在自己電腦的瀏覽器開 <http://127.0.0.1:8787/>。

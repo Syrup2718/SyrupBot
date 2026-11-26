@@ -75,6 +75,10 @@ class Config:
     lull_max_seconds: float = 1800.0
     # 啟動時把自己在每個伺服器的暱稱改成角色名。
     sync_nickname: bool = True
+    # 網頁後台:port 0 代表關閉;預設只聽本機。
+    dashboard_host: str = "127.0.0.1"
+    dashboard_port: int = 8787
+    dashboard_token: str = ""
 
     @classmethod
     def from_env(cls) -> "Config":
@@ -185,4 +189,7 @@ class Config:
             lull_min_seconds=lull_min,
             lull_max_seconds=lull_max,
             sync_nickname=_parse_bool(os.environ.get("SYNC_NICKNAME", "true")),
+            dashboard_host=os.environ.get("DASHBOARD_HOST", "127.0.0.1"),
+            dashboard_port=int(os.environ.get("DASHBOARD_PORT", "8787")),
+            dashboard_token=os.environ.get("DASHBOARD_TOKEN", ""),
         )

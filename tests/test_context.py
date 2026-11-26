@@ -49,3 +49,14 @@ def test_recent_self_falls_out_of_lookback() -> None:
     for i in range(5):
         store.add(1, "別人", f"訊息{i}", is_self=False)
     assert store.has_recent_self(1, lookback=4) is False
+
+
+def test_upsert_updates_by_message_id_or_appends():
+    from syrupbot.context import ConversationStore
+
+    store = ConversationStore(5)
+    assert store.upsert(1, 10, "bot", "思考中") is False
+    store.add(1, "小明", "嗨", is_self=False)
+    assert store.upsert(1, 10, "bot", "答案是 42") is True
+    assert [m.content for m in store.messages(1)] == ["答案是 42", "嗨"]
+    assert store.channel_ids() == [1]

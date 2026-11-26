@@ -53,6 +53,7 @@ class IncomingMessage:
     is_reply_to_bot: bool
     author_id: int | None = None
     addresses_others: bool = False
+    message_id: int | None = None
 
 
 @dataclass(frozen=True)
@@ -135,6 +136,15 @@ class DecisionEngine:
             return False
         chance = self._config.lull_probability * self._fatigue_factor(channel_id)
         return self._rng.random() < chance
+
+    def cooldown_left(self, channel_id: int) -> float:
+        """一般插話冷卻還剩幾秒(給後台顯示用)。"""
+        last = self._last_reply.get(channel_id, float("-inf"))
+        return max(0.0, self._config.reply_cooldown_seconds - (self._clock() - last))
+
+    @property
+    def strategy(self) -> str:
+        return self._config.decision_strategy
 
     def fatigue(self, channel_id: int) -> float:
         """目前這個頻道的話量疲勞值(約等於「最近講了幾次」)。"""

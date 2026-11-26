@@ -8,6 +8,7 @@ from pathlib import Path
 from .bot import SyrupBot
 from .channels import ChannelPolicy
 from .config import Config
+from .dashboard import Dashboard
 from .context import ConversationStore
 from .decision import DecisionEngine
 from .gifs import GifPicker
@@ -45,6 +46,11 @@ def main() -> None:
     bot = SyrupBot(
         pipeline, policy, turn_window_seconds=config.turn_window_seconds,
         nickname=persona.name if config.sync_nickname else None,
+        dashboard=(
+            Dashboard(config.dashboard_host, config.dashboard_port, config.dashboard_token)
+            if config.dashboard_port
+            else None
+        ),
     )
     with local_model(config):
         bot.run(config.discord_token, log_handler=None)

@@ -14,6 +14,7 @@ from discord import app_commands
 
 from .channels import ChannelPolicy
 from .config import DEFAULT_TURN_WINDOW_SECONDS
+from .dashboard import Dashboard
 from .decision import IncomingMessage
 from .pipeline import ChatPipeline, LLMStatus, PipelineResult, lull_message
 from .turns import PendingTurn, TurnScheduler
@@ -93,6 +94,42 @@ def nickname_change(
     return current_nick != target, target
 
 
+def _embed_texts(embeds: list[discord.Embed]) -> list[str]:
+    """把 embed 的作者、標題、內文、欄位和頁尾攤平成幾行文字。"""
+    texts: list[str] = []
+    for embed in embeds:
+        texts.extend(
+            str(text).strip()
+            for text in (embed.author.name, embed.title, embed.description)
+            if text
+        )
+        for item in embed.fields:
+            name = (item.name or "").strip()
+            value = (item.value or "").strip()
+            if name and value:
+                texts.append(f"{name}:{value}")
+            elif name or value:
+                texts.append(name or value)
+        if embed.footer.text:
+            texts.append(embed.footer.text.strip())
+    return texts
+
+
+def _component_texts(components: list) -> list[str]:
+    """遞迴取出新版訊息元件(Components V2)裡的文字區塊。"""
+    texts: list[str] = []
+    for component in components:
+        if isinstance(component, discord.components.TextDisplay):
+            if component.content.strip():
+                texts.append(component.content.strip())
+        children = getattr(component, "children", None)
+        if children is None:
+            children = getattr(component, "components", None)
+        if children:
+            texts.extend(_component_texts(list(children)))
+    return texts
+
+
 class SyrupBot(discord.Client):
     """收 Discord 訊息事件,交給 pipeline 處理並回覆。"""
 
@@ -100,6 +137,7 @@ class SyrupBot(discord.Client):
         self, pipeline: ChatPipeline, channel_policy: ChannelPolicy,
         *, turn_window_seconds: float = DEFAULT_TURN_WINDOW_SECONDS,
         nickname: str | None = None,
+        dashboard: Dashboard | None = None,
     ) -> None:
         intents = discord.Intents.default()
         # message_content 是特權 intent,需在 Developer Portal 開啟,
@@ -113,11 +151,40 @@ class SyrupBot(discord.Client):
         self._turns = TurnScheduler(turn_window_seconds)
         # 每個伺服器要顯示的暱稱(通常是角色名);None 代表不動暱稱。
         self._nickname = nickname
+        self._dashboard = dashboard
         self._turn_locks: dict[int, asyncio.Lock] = {}
         self._lull_waits: dict[int, asyncio.Task[None]] = {}
         self.tree = app_commands.CommandTree(self)
         self._synced = False
         self._register_commands()
+
+    async def setup_hook(self) -> None:
+        if self._dashboard is None:
+            return
+        try:
+            await self._dashboard.start(self.dashboard_state)
+        except OSError:
+            logger.exception("後台啟動失敗(連接埠可能被占用),bot 照常運作")
+
+    async def close(self) -> None:
+        if self._dashboard is not None:
+            await self._dashboard.stop()
+        await super().close()
+
+    def dashboard_state(self) -> dict:
+        """pipeline 的狀態,再補上頻道名稱方便閱讀。"""
+        state = self._pipeline.snapshot()
+        ids = {c["id"] for c in state["channels"]}
+        ids.update(e["channel_id"] for e in state["events"])
+        names = {}
+        for channel_id in ids:
+            channel = self.get_channel(int(channel_id))
+            name = getattr(channel, "name", None)
+            if name:
+                guild = getattr(channel, "guild", None)
+                names[channel_id] = f"{guild.name}/{name}" if guild else name
+        state["channel_names"] = names
+        return state
 
     async def on_ready(self) -> None:
         logger.info("已登入:%s (id=%s)", self.user, self.user.id)
@@ -276,6 +343,18 @@ class SyrupBot(discord.Client):
             if reaction_task is not None:
                 await reaction_task
 
+    async def on_message_edit(
+        self, before: discord.Message, after: discord.Message
+    ) -> None:
+        """很多 bot 先送「思考中」再編輯成真正內容;編輯後的文字也要看得到。"""
+        if not after.author.bot:
+            return
+        if self.user is not None and after.author.id == self.user.id:
+            return
+        if self._clean_content(before) == self._clean_content(after):
+            return  # 只是連結預覽之類的變動,文字沒變
+        self._pipeline.observe(self._to_incoming(after), edited=True)
+
     async def _process_turn(
         self, channel: discord.abc.Messageable, turn: PendingTurn
     ) -> None:
@@ -371,6 +450,7 @@ class SyrupBot(discord.Client):
             channel_id=message.channel.id,
             author=message.author.display_name,
             author_id=message.author.id,
+            message_id=message.id,
             content=self._clean_content(message),
             author_is_bot=message.author.bot,
             mentions_bot=self.user in message.mentions,
@@ -389,12 +469,9 @@ class SyrupBot(discord.Client):
         for mention in (f"<@{self.user.id}>", f"<@!{self.user.id}>"):
             content = content.replace(mention, "")
         if message.author.bot:
-            # 很多 bot 只用 embed 說話,把標題與內文也攤平成文字。
-            parts = [content.strip()]
-            for embed in message.embeds:
-                parts.extend(
-                    text.strip() for text in (embed.title, embed.description) if text
-                )
+            # 很多 bot 不用一般文字說話,把 embed 與新版元件裡的文字也攤平。
+            parts = [content.strip(), *_embed_texts(message.embeds)]
+            parts.extend(_component_texts(message.components))
             content = "\n".join(part for part in parts if part)
         return content.strip()
 

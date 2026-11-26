@@ -100,6 +100,11 @@ discord 事件
   安靜多久算冷場。`bot.py` 只負責計時,到點後由 `ChatPipeline.handle_lull` 擲骰
   (`DecisionEngine.should_break_lull`,受冷卻與疲勞影響)並讓模型決定要不要開口。
 
+- **`monitor.py` / `dashboard.py`** — 後台。`Monitor` 是記憶體內的事件紀錄(成員發言、
+  bot 訊息有沒有被記下與原因、判斷理由、送出的回覆);`Dashboard` 用 aiohttp 提供
+  `/`(`dashboard.html`)與 `/api/state`,狀態來自 `ChatPipeline.snapshot()`。
+  頻道 ID 一律用字串傳給前端(超過 JS 整數精度)。
+
 - **`context.py`** — 每頻道近期上下文(`ConversationStore`),記憶體、重啟即清空,
   含發話者名;`transcript()` 組成給 LLM 的逐字稿。這是**短期上下文**,不是長期記憶。
 

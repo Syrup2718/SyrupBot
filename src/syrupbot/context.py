@@ -18,6 +18,7 @@ class ContextMessage:
     author: str  # 發話者顯示名稱(角色自己的訊息用角色名)
     content: str
     is_self: bool  # 是否為角色自己說的話
+    message_id: int | None = None  # Discord 訊息 ID,用來在訊息被編輯時更新內容
 
 
 class ConversationStore:
@@ -30,11 +31,28 @@ class ConversationStore:
             lambda: deque(maxlen=max_messages)
         )
 
-    def add(self, channel_id: int, author: str, content: str, is_self: bool) -> None:
+    def add(
+        self, channel_id: int, author: str, content: str, is_self: bool,
+        message_id: int | None = None,
+    ) -> None:
         """新增一則訊息;超過上限時自動丟棄最舊的。"""
         self._channels[channel_id].append(
-            ContextMessage(author=author, content=content, is_self=is_self)
+            ContextMessage(author, content, is_self, message_id)
         )
+
+    def upsert(self, channel_id: int, message_id: int, author: str, content: str) -> bool:
+        """依訊息 ID 更新內容(訊息被編輯時);找不到就新增。回傳是否為更新。"""
+        history = self._channels[channel_id]
+        for index, item in enumerate(history):
+            if item.message_id == message_id:
+                history[index] = ContextMessage(author, content, item.is_self, message_id)
+                return True
+        history.append(ContextMessage(author, content, False, message_id))
+        return False
+
+    def channel_ids(self) -> list[int]:
+        """目前有上下文的頻道。"""
+        return [cid for cid, items in self._channels.items() if items]
 
     def messages(self, channel_id: int) -> list[ContextMessage]:
         """回傳某頻道目前的上下文(依時間排序)。"""

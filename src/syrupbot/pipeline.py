@@ -14,7 +14,9 @@ from .context import ConversationStore
 from .decision import DecisionEngine, IncomingMessage
 from .gifs import GifPicker, GifSelection
 from .llm import CompletionStats, LLMClient
+from . import monitor as events
 from .lull import LullWatcher
+from .monitor import Monitor
 from .persona import Persona
 from .postprocess import humanize, is_chat_replay, split_chat_reply
 from .reaction import ReactionEngine
@@ -65,6 +67,7 @@ class ChatPipeline:
         gifs: GifPicker | None = None,
         rng: Random | None = None,
         lull: LullWatcher | None = None,
+        monitor: Monitor | None = None,
     ) -> None:
         self._persona = persona
         self._context = context
@@ -74,6 +77,7 @@ class ChatPipeline:
         self._gifs = gifs
         self._rng = rng or Random()
         self._lull = lull
+        self.monitor = monitor or Monitor()
 
     async def handle(self, msg: IncomingMessage) -> PipelineResult:
         """在沒有回合收集器時，規劃單則訊息的表情與回覆。"""
@@ -87,11 +91,37 @@ class ChatPipeline:
     def can_merge(self, msg: IncomingMessage) -> bool:
         return not msg.addresses_others and self._decision.skip_reason(msg) is None
 
-    def observe(self, msg: IncomingMessage) -> None:
-        """只把訊息記進上下文、不做任何回覆判斷(用於其他 bot 的發言)。"""
-        if not msg.content.strip() or not self._decision.channel_allowed(msg.channel_id):
-            return
-        self._context.add(msg.channel_id, msg.author, msg.content, is_self=False)
+    def observe(self, msg: IncomingMessage, *, edited: bool = False) -> str | None:
+        """只把訊息記進上下文、不做任何回覆判斷(用於其他 bot 的發言)。
+
+        回傳沒記下的原因;有記下時回傳 None。編輯過的訊息會依 ID 更新原本那筆。
+        """
+        reason = None
+        if not msg.content.strip():
+            reason = "沒有文字內容(可能只有圖片,或是還沒編輯完成的延遲回應)"
+        elif not self._decision.channel_allowed(msg.channel_id):
+            reason = "頻道不在白名單"
+        if reason is not None:
+            self.monitor.record(
+                events.BOT_IGNORED, msg.channel_id, author=msg.author,
+                text=msg.content, detail=reason,
+            )
+            return reason
+        if msg.message_id is not None:
+            updated = self._context.upsert(
+                msg.channel_id, msg.message_id, msg.author, msg.content
+            )
+        else:
+            updated = False
+            self._context.add(msg.channel_id, msg.author, msg.content, is_self=False)
+        detail = "編輯後更新上下文" if updated else (
+            "編輯後補記進上下文" if edited else "已記進上下文"
+        )
+        self.monitor.record(
+            events.BOT_SEEN, msg.channel_id, author=msg.author, text=msg.content,
+            detail=detail,
+        )
+        return None
 
     def note_activity(self, msg: IncomingMessage) -> float | None:
         """成員講話時更新冷場計時,回傳安靜多久算冷場(不需要偵測時回 None)。"""
@@ -113,10 +143,12 @@ class ChatPipeline:
             transcript, channel_id=channel_id,
         )
         if not should_reply or self.context_revision(channel_id) != revision:
+            self.monitor.record(events.LULL, channel_id, detail="冷場了,但模型選擇不說")
             return PipelineResult()
         reply = humanize(raw_reply)
         if not reply or self._is_replay(lull_message(channel_id), reply):
             return PipelineResult()
+        self.monitor.record(events.LULL, channel_id, text=reply, detail="冷場主動開口")
         logger.debug("頻道 %s 冷場,角色主動開口", channel_id)
         return PipelineResult(replies=split_chat_reply(reply), context_revision=revision)
 
@@ -132,7 +164,13 @@ class ChatPipeline:
         if self.context_revision(channel_id) != revision:
             return PipelineResult()
         for item in messages:
-            self._context.add(channel_id, item.author, item.content, is_self=False)
+            self._context.add(
+                channel_id, item.author, item.content, is_self=False,
+                message_id=item.message_id,
+            )
+            self.monitor.record(
+                events.HUMAN, channel_id, author=item.author, text=item.content
+            )
 
         auto_gif = None
         if self._gifs is not None and self._decision.skip_reason(msg) is None:
@@ -144,6 +182,10 @@ class ChatPipeline:
 
         decision = await self._decision.decide(msg)
         logger.debug("頻道 %s 決策:%s", msg.channel_id, decision.reason)
+        self.monitor.record(
+            events.DECISION, channel_id, author=msg.author,
+            detail=("要回:" if decision.should_reply else "不回:") + decision.reason,
+        )
         if self._context.revision(msg.channel_id) != revision:
             return PipelineResult()
         if not decision.should_reply:
@@ -155,7 +197,8 @@ class ChatPipeline:
         else:
             transcript = self._context.transcript(msg.channel_id, self._persona.name)
             raw_reply = await self._llm.generate_reply(
-                self._persona.prompt_for_turn(self._rng.random), transcript, channel_id=msg.channel_id,
+                self._persona.prompt_for_turn(self._rng.random), transcript,
+                channel_id=msg.channel_id,
                 latest_message=(msg.author, msg.content),
             )
 
@@ -211,10 +254,38 @@ class ChatPipeline:
             parts = [*sent, f"[傳了{result.gif.label} GIF]"]
         if not parts:
             return
-        self._context.add(msg.channel_id, self._persona.name, "\n".join(parts), is_self=True)
+        text = "\n".join(parts)
+        self._context.add(msg.channel_id, self._persona.name, text, is_self=True)
+        self.monitor.record(events.REPLY, msg.channel_id, author=self._persona.name, text=text)
         if sent:
             self._decision.record_reply(msg.channel_id)
         self._decision.record_delivered_reply(msg)
+
+    def snapshot(self) -> dict:
+        """後台用的目前狀態:角色、策略、各頻道上下文與節奏,以及最近事件。"""
+        channels = []
+        for channel_id in self._context.channel_ids():
+            count, limit = self._context.usage(channel_id)
+            channels.append({
+                "id": str(channel_id),  # 超過 JavaScript 整數精度,用字串傳
+                "allowed": self._decision.channel_allowed(channel_id),
+                "fatigue": round(self._decision.fatigue(channel_id), 2),
+                "cooldown_left": round(self._decision.cooldown_left(channel_id), 1),
+                "context_count": count,
+                "context_limit": limit,
+                "messages": [
+                    {"author": m.author, "content": m.content, "is_self": m.is_self}
+                    for m in self._context.messages(channel_id)
+                ],
+            })
+        return {
+            "persona": self._persona.name,
+            "strategy": self._decision.strategy,
+            "model": self._llm.model,
+            "in_flight": self._llm.in_flight,
+            "channels": channels,
+            "events": self.monitor.events(),
+        }
 
     def llm_status(self, channel_id: int) -> LLMStatus:
         """取得目前的頻道上下文和最近一次模型請求。"""

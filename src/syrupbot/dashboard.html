@@ -1,0 +1,168 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SyrupBot 後台</title>
+<style>
+  :root {
+    --bg: #f6f5f2; --panel: #ffffff; --ink: #1f1d1a; --muted: #75706a; --line: #e4e0da;
+    --accent: #d9792b; --ok: #2f8f5b; --bad: #c2453a; --info: #3a6fc2; --self: #fbefe3;
+    color-scheme: light;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #161513; --panel: #201f1c; --ink: #ece8e2; --muted: #9a948c; --line: #34312d;
+      --accent: #f0a05a; --ok: #5cc48a; --bad: #ef7a6e; --info: #7aa6ef; --self: #3a2c1f;
+      color-scheme: dark;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink);
+    font: 14px/1.5 system-ui, -apple-system, "Segoe UI", "Noto Sans TC", "Microsoft JhengHei", sans-serif; }
+  header { display: flex; flex-wrap: wrap; gap: 8px 20px; align-items: baseline;
+    padding: 14px 20px; border-bottom: 1px solid var(--line); background: var(--panel); }
+  header h1 { margin: 0; font-size: 18px; }
+  .stat { color: var(--muted); }
+  .stat b { color: var(--ink); font-weight: 600; }
+  .grow { flex: 1; }
+  button { font: inherit; border: 1px solid var(--line); background: var(--panel); color: var(--ink);
+    padding: 3px 10px; border-radius: 6px; cursor: pointer; }
+  button.on { border-color: var(--accent); color: var(--accent); }
+  main { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.1fr); gap: 16px; padding: 16px 20px; }
+  @media (max-width: 860px) { main { grid-template-columns: 1fr; } }
+  section { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; min-width: 0; }
+  h2 { margin: 0 0 10px; font-size: 15px; }
+  .channels { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; }
+  .chip { border: 1px solid var(--line); border-radius: 999px; padding: 2px 10px; cursor: pointer; background: transparent; }
+  .chip.sel { border-color: var(--accent); color: var(--accent); }
+  .meta { display: flex; flex-wrap: wrap; gap: 4px 16px; color: var(--muted); margin-bottom: 8px; }
+  .msgs, .events { max-height: calc(100vh - 230px); overflow-y: auto; }
+  .msg { padding: 6px 8px; border-radius: 6px; margin-bottom: 4px; white-space: pre-wrap; word-break: break-word; }
+  .msg.self { background: var(--self); }
+  .who { font-weight: 600; margin-right: 6px; }
+  .ev { display: grid; grid-template-columns: 64px 76px minmax(0, 1fr); gap: 8px; padding: 6px 0;
+    border-bottom: 1px solid var(--line); }
+  .ev time { color: var(--muted); font-variant-numeric: tabular-nums; }
+  .tag { font-size: 12px; border-radius: 4px; padding: 0 6px; height: fit-content; text-align: center; border: 1px solid currentColor; }
+  .t-human { color: var(--muted); } .t-bot_seen { color: var(--ok); } .t-bot_ignored { color: var(--bad); }
+  .t-decision { color: var(--info); } .t-reply, .t-lull { color: var(--accent); }
+  .body { white-space: pre-wrap; word-break: break-word; }
+  .detail { color: var(--muted); }
+  .ev.bot_ignored .detail { color: var(--bad); }
+  .empty { color: var(--muted); padding: 12px 0; }
+  .err { color: var(--bad); }
+</style>
+</head>
+<body>
+<header>
+  <h1>SyrupBot 後台</h1>
+  <span class="stat">角色 <b id="persona">-</b></span>
+  <span class="stat">策略 <b id="strategy">-</b></span>
+  <span class="stat">模型 <b id="model">-</b></span>
+  <span class="stat">進行中請求 <b id="inflight">-</b></span>
+  <span class="grow"></span>
+  <span class="stat" id="updated">連線中…</span>
+  <button id="pause">暫停更新</button>
+</header>
+<main>
+  <section>
+    <h2>頻道上下文</h2>
+    <div class="channels" id="channels"></div>
+    <div class="meta" id="meta"></div>
+    <div class="msgs" id="msgs"><div class="empty">還沒有任何頻道的上下文。有人在頻道講話後就會出現。</div></div>
+  </section>
+  <section>
+    <h2>最近事件</h2>
+    <div class="channels" id="filters"></div>
+    <div class="events" id="events"></div>
+  </section>
+</main>
+<script>
+const KIND = {
+  human: "成員", bot_seen: "bot 已記", bot_ignored: "bot 略過",
+  decision: "判斷", reply: "回覆", lull: "冷場",
+};
+const FILTERS = [
+  ["all", "全部", null],
+  ["bots", "別的 bot", ["bot_seen", "bot_ignored"]],
+  ["decide", "判斷與回覆", ["decision", "reply", "lull"]],
+];
+let state = null, selected = null, filter = "all", paused = false;
+const token = new URLSearchParams(location.search).get("token");
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;"}[c]));
+const clock = (t) => new Date(t * 1000).toLocaleTimeString("zh-TW", {hour12: false});
+const label = (id) => (state?.channel_names?.[id]) || id;
+
+function renderChannels() {
+  const chans = state.channels;
+  if (!chans.length) { $("channels").innerHTML = ""; return; }
+  if (!chans.some((c) => c.id === selected)) selected = chans[0].id;
+  $("channels").innerHTML = chans.map((c) =>
+    `<button class="chip ${c.id === selected ? "sel" : ""}" data-id="${c.id}">#${esc(label(c.id))}</button>`).join("");
+  const c = chans.find((x) => x.id === selected);
+  $("meta").innerHTML = [
+    c.allowed ? "可互動" : `<span class="err">不在白名單</span>`,
+    `上下文 ${c.context_count}/${c.context_limit}`,
+    `話量疲勞 ${c.fatigue}`,
+    c.cooldown_left > 0 ? `冷卻還剩 ${c.cooldown_left} 秒` : "不在冷卻",
+  ].map((x) => `<span>${x}</span>`).join("");
+  $("msgs").innerHTML = c.messages.map((m) =>
+    `<div class="msg ${m.is_self ? "self" : ""}"><span class="who">${esc(m.author)}</span>${esc(m.content)}</div>`).join("")
+    || `<div class="empty">這個頻道沒有上下文。</div>`;
+}
+
+function renderEvents() {
+  $("filters").innerHTML = FILTERS.map(([key, name]) =>
+    `<button class="chip ${key === filter ? "sel" : ""}" data-filter="${key}">${name}</button>`).join("");
+  const kinds = FILTERS.find(([key]) => key === filter)[2];
+  const rows = state.events.filter((e) => !kinds || kinds.includes(e.kind));
+  $("events").innerHTML = rows.map((e) => `
+    <div class="ev ${e.kind}">
+      <time>${clock(e.at)}</time>
+      <span class="tag t-${e.kind}">${KIND[e.kind] || e.kind}</span>
+      <div>
+        <div class="body">${e.author ? `<span class="who">${esc(e.author)}</span>` : ""}<span class="detail">#${esc(label(e.channel_id))}</span>${e.text ? "\n" + esc(e.text) : ""}</div>
+        ${e.detail ? `<div class="detail">${esc(e.detail)}</div>` : ""}
+      </div>
+    </div>`).join("") || `<div class="empty">還沒有事件。</div>`;
+}
+
+async function refresh() {
+  if (paused) return;
+  try {
+    const res = await fetch("api/state" + (token ? `?token=${encodeURIComponent(token)}` : ""));
+    if (!res.ok) throw new Error(res.status === 401 ? "token 不正確" : `HTTP ${res.status}`);
+    state = await res.json();
+    $("persona").textContent = state.persona;
+    $("strategy").textContent = state.strategy;
+    $("model").textContent = state.model;
+    $("inflight").textContent = state.in_flight;
+    renderChannels();
+    renderEvents();
+    $("updated").textContent = "更新於 " + new Date().toLocaleTimeString("zh-TW", {hour12: false});
+    $("updated").className = "stat";
+  } catch (err) {
+    $("updated").textContent = "連線失敗:" + err.message;
+    $("updated").className = "stat err";
+  }
+}
+
+document.addEventListener("click", (ev) => {
+  const t = ev.target.closest("button");
+  if (!t) return;
+  if (t.dataset.id) { selected = t.dataset.id; renderChannels(); }
+  else if (t.dataset.filter) { filter = t.dataset.filter; renderEvents(); }
+  else if (t.id === "pause") {
+    paused = !paused;
+    t.textContent = paused ? "繼續更新" : "暫停更新";
+    t.classList.toggle("on", paused);
+    if (!paused) refresh();
+  }
+});
+refresh();
+setInterval(refresh, 3000);
+</script>
+</body>
+</html>
