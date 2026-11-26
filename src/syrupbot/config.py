@@ -84,6 +84,8 @@ class Config:
     reply_quote_mode: str = "auto"
     reply_quote_probability: float = 0.25  # auto 時,沒人插話也偶爾引用的機率
     reply_quote_ping: bool = False  # 引用時要不要通知對方
+    # 允許角色 tag 最近在頻道講過話的人(永遠不會 @everyone、@here 或身分組)。
+    tag_members: bool = True
     # 網頁後台:port 0 代表關閉;預設只聽本機。
     dashboard_host: str = "127.0.0.1"
     dashboard_port: int = 8787
@@ -221,6 +223,7 @@ class Config:
             reply_quote_mode=quote_mode,
             reply_quote_probability=quote_probability,
             reply_quote_ping=_parse_bool(os.environ.get("REPLY_QUOTE_PING", "false")),
+            tag_members=_parse_bool(os.environ.get("TAG_MEMBERS", "true")),
             dashboard_host=os.environ.get("DASHBOARD_HOST", "127.0.0.1"),
             dashboard_port=int(os.environ.get("DASHBOARD_PORT", "8787")),
             dashboard_token=os.environ.get("DASHBOARD_TOKEN", ""),

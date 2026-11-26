@@ -158,3 +158,28 @@ def _strip_wrapping_quotes(text: str) -> str:
             if open_q not in inner and close_q not in inner:
                 return inner.strip()
     return text
+
+
+def link_mentions(text: str, members: dict[str, int]) -> str:
+    """把模型寫的「@名字」換成真正的 Discord tag(<@ID>)。
+
+    只換 members 裡的人(最近在頻道講過話的),名字長的先換,避免「小明」
+    吃掉「小明明」。全形＠也接受。對不到的 @ 原樣保留。
+    """
+    for name in sorted(members, key=len, reverse=True):
+        if not name:
+            continue
+        pattern = re.compile(r"[@＠]" + re.escape(name))
+        text = pattern.sub(f"<@{members[name]}>", text)
+    return text
+
+
+def unlink_mentions(text: str, members: dict[str, int]) -> str:
+    """把 <@ID> 換回「@名字」,存進上下文時給模型看得懂的版本。"""
+    names = {user_id: name for name, user_id in members.items()}
+
+    def replace(match: re.Match[str]) -> str:
+        user_id = int(match.group(1))
+        return f"@{names[user_id]}" if user_id in names else match.group(0)
+
+    return re.sub(r"<@!?(\d+)>", replace, text)

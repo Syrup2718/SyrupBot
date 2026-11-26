@@ -24,7 +24,7 @@ def setup_status(monkeypatch):
     )
     config = SimpleNamespace(
         model="qwen-chat", decision_model="judge-model", temperature=1.1,
-        disable_thinking=False, deepseek_api_key="fake-key",
+        disable_thinking=False, tag_members=True, deepseek_api_key="fake-key",
         deepseek_base_url="http://127.0.0.1:9932/v1",
     )
     client = llm.LLMClient(config)

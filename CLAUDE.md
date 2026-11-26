@@ -84,6 +84,9 @@ discord 事件
     主動插話機率乘上 `1/(1+疲勞)`;捷徑(@、reply、接話)不受影響。
   - **引用回覆**:`should_quote` 決定第一段要不要用 Discord「回覆」引用目標訊息
     (`REPLY_QUOTE_MODE`);`bot.py` 記錄每頻道最新訊息 ID 來判斷中間有沒有人插話。
+  - **tag 成員**:模型寫「@名字」,`pipeline` 用 `ConversationStore.speakers()`(最近發話者
+    名字→ID)經 `postprocess.link_mentions` 換成 `<@ID>`;存回上下文時再 `unlink_mentions`。
+    `bot.py` 的 `allowed_mentions` 永遠擋掉 everyone/here/身分組(`TAG_MEMBERS` 可關)。
   - Discord 成功送出後，pipeline 才記錄已送達的文字、更新一般冷卻，並開始等待原發話者接話。
 
 - **`persona.py`** — 從 `personas/<PERSONA>.toml` 載入角色,組出 system prompt

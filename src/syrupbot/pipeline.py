@@ -18,7 +18,13 @@ from . import monitor as events
 from .lull import LullWatcher
 from .monitor import Monitor
 from .persona import Persona
-from .postprocess import humanize, is_chat_replay, split_chat_reply
+from .postprocess import (
+    humanize,
+    is_chat_replay,
+    link_mentions,
+    split_chat_reply,
+    unlink_mentions,
+)
 from .reaction import ReactionEngine
 from .turns import combine_turn
 
@@ -68,6 +74,7 @@ class ChatPipeline:
         rng: Random | None = None,
         lull: LullWatcher | None = None,
         monitor: Monitor | None = None,
+        tag_members: bool = True,
     ) -> None:
         self._persona = persona
         self._context = context
@@ -78,6 +85,8 @@ class ChatPipeline:
         self._rng = rng or Random()
         self._lull = lull
         self.monitor = monitor or Monitor()
+        # 允許角色用「@名字」tag 最近講過話的人。
+        self._tag_members = tag_members
 
     async def handle(self, msg: IncomingMessage) -> PipelineResult:
         """在沒有回合收集器時，規劃單則訊息的表情與回覆。"""
@@ -125,11 +134,14 @@ class ChatPipeline:
             return reason
         if msg.message_id is not None:
             updated = self._context.upsert(
-                msg.channel_id, msg.message_id, msg.author, msg.content
+                msg.channel_id, msg.message_id, msg.author, msg.content, msg.author_id
             )
         else:
             updated = False
-            self._context.add(msg.channel_id, msg.author, msg.content, is_self=False)
+            self._context.add(
+                msg.channel_id, msg.author, msg.content, is_self=False,
+                author_id=msg.author_id,
+            )
         detail = "編輯後更新上下文" if updated else (
             "編輯後補記進上下文" if edited else "已記進上下文"
         )
@@ -168,7 +180,10 @@ class ChatPipeline:
             return PipelineResult()
         self.monitor.record(events.LULL, channel_id, text=reply, detail="冷場主動開口")
         logger.debug("頻道 %s 冷場,角色主動開口", channel_id)
-        return PipelineResult(replies=split_chat_reply(reply), context_revision=revision)
+        return PipelineResult(
+            replies=split_chat_reply(self._link(channel_id, reply)),
+            context_revision=revision,
+        )
 
     def reaction_for(self, msg: IncomingMessage) -> str | None:
         return self._reaction.decide_self_reaction(msg)
@@ -184,7 +199,7 @@ class ChatPipeline:
         for item in messages:
             self._context.add(
                 channel_id, item.author, item.content, is_self=False,
-                message_id=item.message_id,
+                message_id=item.message_id, author_id=item.author_id,
             )
             self.monitor.record(
                 events.BOT_SEEN if item.author_is_bot else events.HUMAN,
@@ -242,7 +257,15 @@ class ChatPipeline:
         if not reply:
             return gif_only
 
-        return replace(gif_only, replies=split_chat_reply(reply))
+        return replace(
+            gif_only, replies=split_chat_reply(self._link(channel_id, reply))
+        )
+
+    def _link(self, channel_id: int, reply: str) -> str:
+        """把回覆裡的「@名字」換成真的 tag(只限最近講過話的人)。"""
+        if not self._tag_members:
+            return reply
+        return link_mentions(reply, self._context.speakers(channel_id))
 
     def clear_context(self, channel_id: int) -> int:
         """清空本頻道的短期記憶與連續對話。"""
@@ -274,7 +297,8 @@ class ChatPipeline:
             parts = [*sent, f"[傳了{result.gif.label} GIF]"]
         if not parts:
             return
-        text = "\n".join(parts)
+        # 存進上下文時把 <@ID> 換回「@名字」,模型才看得懂自己 tag 了誰。
+        text = unlink_mentions("\n".join(parts), self._context.speakers(msg.channel_id))
         self._context.add(msg.channel_id, self._persona.name, text, is_self=True)
         self.monitor.record(events.REPLY, msg.channel_id, author=self._persona.name, text=text)
         if sent:

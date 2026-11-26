@@ -360,3 +360,48 @@ def test_lull_target_points_at_last_message_from_others(setup_pipeline):
     assert pipeline.lull_target(1).message_id == 77
     context.add(1, "漿糖", "我在", is_self=True)
     assert pipeline.lull_target(1).message_id is None
+
+
+async def test_reply_tags_recent_speaker_and_context_keeps_readable_name(setup_pipeline):
+    pipeline, context, decision, llm = setup_pipeline
+    decision.skip_reason.return_value = None
+    llm.generate_reply.return_value = "@小華 你也來看"
+    context.add(1, "小華", "我在", is_self=False, author_id=55)
+    msg = replace(_INCOMING, author_id=7, content="大家看這個")
+
+    result = await pipeline.handle_turn((msg,), 0)
+    assert result.replies == ["<@55> 你也來看"]
+
+    pipeline.record_delivered_reply(msg, result, result.replies)
+    assert context.messages(1)[-1].content == "@小華 你也來看"
+
+
+async def test_tagging_can_be_disabled(setup_pipeline):
+    _, context, decision, llm = setup_pipeline
+    persona = Persona.load("syrup")
+    pipeline = ChatPipeline(persona, context, decision, llm, Mock(), tag_members=False)
+    decision.skip_reason.return_value = None
+    llm.generate_reply.return_value = "@小華 你也來看"
+    context.add(1, "小華", "我在", is_self=False, author_id=55)
+    result = await pipeline.handle_turn((replace(_INCOMING, author_id=7),), 0)
+    assert result.replies == ["@小華 你也來看"]
+
+
+def test_bot_never_pings_everyone_or_roles(setup_pipeline):
+    pipeline, *_ = setup_pipeline
+    mentions = SyrupBot(pipeline, ChannelPolicy()).allowed_mentions
+    assert mentions.everyone is False and mentions.roles is False
+    assert mentions.users is True
+
+
+def test_incoming_tags_of_others_become_readable_names(setup_pipeline):
+    pipeline, *_ = setup_pipeline
+    bot = SyrupBot(pipeline, ChannelPolicy())
+    me = SimpleNamespace(id=42)
+    bot._connection.user = me
+    friend = SimpleNamespace(id=55, display_name="小華")
+    message = SimpleNamespace(
+        content="<@42> 你看 <@55> 又遲到", mentions=[me, friend],
+        author=SimpleNamespace(bot=False),
+    )
+    assert bot._clean_content(message) == "你看 @小華 又遲到"

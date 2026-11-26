@@ -40,7 +40,8 @@ def main() -> None:
     reaction = ReactionEngine(config, persona, policy=policy)
     gifs = GifPicker(config, persona)
     pipeline = ChatPipeline(
-        persona, context, decision, llm, reaction, gifs, lull=LullWatcher(config)
+        persona, context, decision, llm, reaction, gifs, lull=LullWatcher(config),
+        tag_members=config.tag_members,
     )
 
     bot = SyrupBot(

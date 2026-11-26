@@ -43,6 +43,13 @@ _CHAT_GUIDANCE = (
     "每次優先回一兩句短句。需要補一句時，可以在自然停頓處換行。話說完就停。"
 )
 
+# 允許 tag 時附加:程式會把「@名字」換成真正的 Discord tag。
+_TAG_GUIDANCE = (
+    "需要特別叫某個人（例如同時在跟好幾個人聊、想點名某人、或要提醒他）時，"
+    "可以寫「@名字」，名字要和紀錄裡的發話者一模一樣。平常聊天不用 tag，"
+    "一則回覆最多 tag 一個人，也不要 tag 你自己。"
+)
+
 # 已決定要回覆，只要求模型產生聊天文字。
 _REPLY_INSTRUCTION = (
     "\n\n請以角色的語氣接話。只輸出要發到群裡的內容，省略名字與前綴。"
@@ -89,6 +96,7 @@ class LLMClient:
         self.in_flight = 0
         self._last_stats: dict[int, CompletionStats] = {}
         self._temperature = config.temperature
+        self._guidance = _CHAT_GUIDANCE + (_TAG_GUIDANCE if config.tag_members else "")
         self._extra_body = (
             {"chat_template_kwargs": {"enable_thinking": False}}
             if config.disable_thinking
@@ -134,7 +142,7 @@ class LLMClient:
                 messages=[
                     {
                         "role": "system",
-                        "content": system_prompt + _CHAT_GUIDANCE + instruction,
+                        "content": system_prompt + self._guidance + instruction,
                     },
                     {"role": "user", "content": conversation},
                 ],

@@ -146,7 +146,13 @@ class SyrupBot(discord.Client):
         intents.message_content = True
         # 表情事件用的 intent(非特權,default 其實已含,這裡明示以免日後誤改)。
         intents.reactions = True
-        super().__init__(intents=intents)
+        # 她可以 tag 個別成員,但絕不能 @everyone、@here 或身分組。
+        super().__init__(
+            intents=intents,
+            allowed_mentions=discord.AllowedMentions(
+                everyone=False, roles=False, users=True, replied_user=False
+            ),
+        )
         self._pipeline = pipeline
         self._policy = channel_policy
         self._turns = TurnScheduler(turn_window_seconds)
@@ -479,6 +485,12 @@ class SyrupBot(discord.Client):
         content = message.content
         for mention in (f"<@{self.user.id}>", f"<@!{self.user.id}>"):
             content = content.replace(mention, "")
+        # 別人 tag 其他成員時換成「@名字」,模型才看得懂在叫誰。
+        for user in message.mentions:
+            if user != self.user:
+                name = f"@{user.display_name}"
+                content = content.replace(f"<@{user.id}>", name)
+                content = content.replace(f"<@!{user.id}>", name)
         if message.author.bot:
             # 很多 bot 不用一般文字說話,把 embed 與新版元件裡的文字也攤平。
             parts = [content.strip(), *_embed_texts(message.embeds)]

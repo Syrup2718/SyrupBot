@@ -60,3 +60,14 @@ def test_upsert_updates_by_message_id_or_appends():
     assert store.upsert(1, 10, "bot", "答案是 42") is True
     assert [m.content for m in store.messages(1)] == ["答案是 42", "嗨"]
     assert store.channel_ids() == [1]
+
+
+def test_speakers_maps_recent_names_to_ids_without_self():
+    from syrupbot.context import ConversationStore
+
+    store = ConversationStore(5)
+    store.add(1, "小明", "嗨", is_self=False, author_id=7)
+    store.add(1, "漿糖", "嗨嗨", is_self=True)
+    store.add(1, "路人", "沒有 ID", is_self=False)
+    store.upsert(1, 99, "音樂bot", "播放中", author_id=8)
+    assert store.speakers(1) == {"小明": 7, "音樂bot": 8}

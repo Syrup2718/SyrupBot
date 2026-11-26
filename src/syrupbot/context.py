@@ -19,6 +19,7 @@ class ContextMessage:
     content: str
     is_self: bool  # 是否為角色自己說的話
     message_id: int | None = None  # Discord 訊息 ID,用來在訊息被編輯時更新內容
+    author_id: int | None = None  # 發話者 ID,讓角色能 tag 最近講過話的人
 
 
 class ConversationStore:
@@ -33,22 +34,35 @@ class ConversationStore:
 
     def add(
         self, channel_id: int, author: str, content: str, is_self: bool,
-        message_id: int | None = None,
+        message_id: int | None = None, author_id: int | None = None,
     ) -> None:
         """新增一則訊息;超過上限時自動丟棄最舊的。"""
         self._channels[channel_id].append(
-            ContextMessage(author, content, is_self, message_id)
+            ContextMessage(author, content, is_self, message_id, author_id)
         )
 
-    def upsert(self, channel_id: int, message_id: int, author: str, content: str) -> bool:
+    def upsert(
+        self, channel_id: int, message_id: int, author: str, content: str,
+        author_id: int | None = None,
+    ) -> bool:
         """依訊息 ID 更新內容(訊息被編輯時);找不到就新增。回傳是否為更新。"""
         history = self._channels[channel_id]
         for index, item in enumerate(history):
             if item.message_id == message_id:
-                history[index] = ContextMessage(author, content, item.is_self, message_id)
+                history[index] = ContextMessage(
+                    author, content, item.is_self, message_id, author_id or item.author_id
+                )
                 return True
-        history.append(ContextMessage(author, content, False, message_id))
+        history.append(ContextMessage(author, content, False, message_id, author_id))
         return False
+
+    def speakers(self, channel_id: int) -> dict[str, int]:
+        """最近在這個頻道講過話的人(名字 → ID),不含角色自己。"""
+        return {
+            item.author: item.author_id
+            for item in self._channels.get(channel_id, ())
+            if not item.is_self and item.author_id is not None and item.author
+        }
 
     def channel_ids(self) -> list[int]:
         """目前有上下文的頻道。"""
