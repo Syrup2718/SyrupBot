@@ -105,7 +105,7 @@ def test_snapshot_uses_string_ids_and_includes_events():
 
 
 def test_monitor_keeps_latest_events_first_and_bounded():
-    monitor = Monitor(max_events=2, clock=iter([1.0, 2.0, 3.0]).__next__)
+    monitor = Monitor(max_events=2, clock=iter([0.0, 1.0, 2.0, 3.0]).__next__)
     for text in ("一", "二", "三"):
         monitor.record("human", 1, text=text)
     assert [e["text"] for e in monitor.events()] == ["三", "二"]
@@ -136,3 +136,20 @@ async def test_bot_dashboard_state_adds_channel_names():
     bot.get_channel = lambda cid: SimpleNamespace(name="閒聊", guild=SimpleNamespace(name="糖群"))
     state = bot.dashboard_state()
     assert state["channel_names"] == {"1234567890123456789": "糖群/閒聊"}
+
+
+def test_monitor_counts_survive_the_event_limit():
+    monitor = Monitor(max_events=1)
+    monitor.record("human", 1)
+    monitor.record("decision", 1, replied=True)
+    monitor.record("decision", 1, replied=False)
+    assert monitor.counts == {"human": 1, "decision": 2}
+    assert monitor.decisions == {"reply": 1, "skip": 1}
+    assert len(monitor.events()) == 1
+
+
+def test_snapshot_marks_bot_speakers():
+    pipeline, _ = _pipeline()
+    pipeline.observe(_BOT_MSG)
+    message = pipeline.snapshot()["channels"][0]["messages"][0]
+    assert message["is_bot"] is True

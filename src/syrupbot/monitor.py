@@ -37,14 +37,21 @@ class Monitor:
     ) -> None:
         self._events: deque[MonitorEvent] = deque(maxlen=max_events)
         self._clock = clock or time.time
+        self.started_at = self._clock()
+        # 啟動以來各種事件的總數(事件清單有上限,總數不受影響)。
+        self.counts: dict[str, int] = {}
+        self.decisions = {"reply": 0, "skip": 0}
 
     def record(
         self, kind: str, channel_id: int, *, author: str = "", text: str = "",
-        detail: str = "",
+        detail: str = "", replied: bool | None = None,
     ) -> None:
         self._events.append(
             MonitorEvent(self._clock(), kind, channel_id, author, text[:500], detail)
         )
+        self.counts[kind] = self.counts.get(kind, 0) + 1
+        if replied is not None:
+            self.decisions["reply" if replied else "skip"] += 1
 
     def events(self) -> list[dict]:
         """由新到舊的事件清單(可直接轉 JSON)。

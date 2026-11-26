@@ -292,6 +292,24 @@ class DecisionEngine:
             return True
         return self._rng.random() < self._config.reply_quote_probability
 
+    def settings(self) -> dict:
+        """後台顯示用的決策相關設定(唯讀)。"""
+        c = self._config
+        return {
+            "decision_strategy": c.decision_strategy,
+            "reply_probability": c.reply_probability,
+            "look_probability": c.look_probability,
+            "reply_cooldown_seconds": c.reply_cooldown_seconds,
+            "decision_cooldown_seconds": c.decision_cooldown_seconds,
+            "talk_fatigue_half_life_seconds": c.talk_fatigue_half_life_seconds,
+            "lull_probability": c.lull_probability,
+            "bot_reply_mode": c.bot_reply_mode,
+            "bot_reply_max": c.bot_reply_max,
+            "bot_reply_window_seconds": c.bot_reply_window_seconds,
+            "reply_quote_mode": c.reply_quote_mode,
+            "reply_quote_probability": c.reply_quote_probability,
+        }
+
     def channel_allowed(self, channel_id: int) -> bool:
         """這個頻道是否在漿糖可互動的範圍內。"""
         return self._policy.is_allowed(channel_id)

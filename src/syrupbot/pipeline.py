@@ -87,6 +87,8 @@ class ChatPipeline:
         self.monitor = monitor or Monitor()
         # 允許角色用「@名字」tag 最近講過話的人。
         self._tag_members = tag_members
+        # 看過的 bot 帳號,後台用來標示哪些發言者是 bot。
+        self._bot_ids: set[int] = set()
 
     async def handle(self, msg: IncomingMessage) -> PipelineResult:
         """在沒有回合收集器時，規劃單則訊息的表情與回覆。"""
@@ -132,6 +134,8 @@ class ChatPipeline:
                 text=msg.content, detail=reason,
             )
             return reason
+        if msg.author_is_bot and msg.author_id is not None:
+            self._bot_ids.add(msg.author_id)
         if msg.message_id is not None:
             updated = self._context.upsert(
                 msg.channel_id, msg.message_id, msg.author, msg.content, msg.author_id
@@ -197,6 +201,8 @@ class ChatPipeline:
         if self.context_revision(channel_id) != revision:
             return PipelineResult()
         for item in messages:
+            if item.author_is_bot and item.author_id is not None:
+                self._bot_ids.add(item.author_id)
             self._context.add(
                 channel_id, item.author, item.content, is_self=False,
                 message_id=item.message_id, author_id=item.author_id,
@@ -220,6 +226,7 @@ class ChatPipeline:
         self.monitor.record(
             events.DECISION, channel_id, author=msg.author,
             detail=("要回:" if decision.should_reply else "不回:") + decision.reason,
+            replied=decision.should_reply,
         )
         if self._context.revision(msg.channel_id) != revision:
             return PipelineResult()
@@ -320,7 +327,12 @@ class ChatPipeline:
                 "context_count": count,
                 "context_limit": limit,
                 "messages": [
-                    {"author": m.author, "content": m.content, "is_self": m.is_self}
+                    {
+                        "author": m.author,
+                        "content": m.content,
+                        "is_self": m.is_self,
+                        "is_bot": m.author_id in self._bot_ids,
+                    }
                     for m in self._context.messages(channel_id)
                 ],
             })
@@ -328,7 +340,13 @@ class ChatPipeline:
             "persona": self._persona.name,
             "strategy": self._decision.strategy,
             "model": self._llm.model,
+            "decision_model": self._llm.decision_model,
             "in_flight": self._llm.in_flight,
+            "started_at": self.monitor.started_at,
+            "counts": dict(self.monitor.counts),
+            "decisions": dict(self.monitor.decisions),
+            "settings": self._decision.settings(),
+            "tag_members": self._tag_members,
             "channels": channels,
             "events": self.monitor.events(),
         }
