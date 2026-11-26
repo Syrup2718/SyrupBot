@@ -239,3 +239,28 @@ async def test_clear_invalidates_a_turn_still_in_the_queue(setup_pipeline):
     assert not result.replies
     assert not context.messages(1)
     decision.decide.assert_not_awaited()
+
+
+async def test_other_bot_messages_are_seen_but_never_answered(setup_pipeline):
+    pipeline, context, decision, llm = setup_pipeline
+    decision.channel_allowed.return_value = True
+    bot = SyrupBot(pipeline, ChannelPolicy(), turn_window_seconds=10)
+    bot._connection.user = SimpleNamespace(id=42)
+    other = replace(_INCOMING, author="音樂bot", content="正在播放:晴天", author_is_bot=True)
+    message = SimpleNamespace(author=SimpleNamespace(bot=True, id=99), incoming=other)
+    bot._to_incoming = lambda m: m.incoming
+
+    await bot.on_message(message)
+
+    assert context.messages(1)[-1].author == "音樂bot"
+    assert context.messages(1)[-1].content == "正在播放:晴天"
+    decision.decide.assert_not_called()
+    llm.generate_reply.assert_not_called()
+
+
+def test_observe_skips_disallowed_channel(setup_pipeline):
+    pipeline, context, decision, _ = setup_pipeline
+    decision.channel_allowed.return_value = False
+    before = len(context.messages(1))
+    pipeline.observe(replace(_INCOMING, author_is_bot=True))
+    assert len(context.messages(1)) == before

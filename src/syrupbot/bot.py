@@ -209,6 +209,10 @@ class SyrupBot(discord.Client):
 
     async def on_message(self, message: discord.Message) -> None:
         if message.author.bot:
+            # 別的 bot 的話只記進上下文讓漿糖「看得到」,不觸發回覆或表情,
+            # 避免兩個 bot 互相接話停不下來。自己的訊息由送出流程記錄。
+            if self.user is None or message.author.id != self.user.id:
+                self._pipeline.observe(self._to_incoming(message))
             return
 
         incoming = self._to_incoming(message)
@@ -316,6 +320,14 @@ class SyrupBot(discord.Client):
         content = message.content
         for mention in (f"<@{self.user.id}>", f"<@!{self.user.id}>"):
             content = content.replace(mention, "")
+        if message.author.bot:
+            # 很多 bot 只用 embed 說話,把標題與內文也攤平成文字。
+            parts = [content.strip()]
+            for embed in message.embeds:
+                parts.extend(
+                    text.strip() for text in (embed.title, embed.description) if text
+                )
+            content = "\n".join(part for part in parts if part)
         return content.strip()
 
     def _is_reply_to_bot(self, message: discord.Message) -> bool:

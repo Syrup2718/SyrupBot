@@ -186,12 +186,16 @@ class DecisionEngine:
     def skip_reason(self, msg: IncomingMessage) -> str | None:
         """提供回合收集與決策共用的硬規則。"""
         if msg.author_is_bot:
-            return "發話者是 bot"
+            return "發話者是 bot(只看不回)"
         if not self._policy.is_allowed(msg.channel_id):
             return "頻道不在白名單"
         if self._looks_like_command(msg.content):
             return "看起來是給別的 bot 的指令"
         return None
+
+    def channel_allowed(self, channel_id: int) -> bool:
+        """這個頻道是否在漿糖可互動的範圍內。"""
+        return self._policy.is_allowed(channel_id)
 
     @staticmethod
     def _looks_like_command(content: str) -> bool:

@@ -74,6 +74,12 @@ class ChatPipeline:
     def can_merge(self, msg: IncomingMessage) -> bool:
         return not msg.addresses_others and self._decision.skip_reason(msg) is None
 
+    def observe(self, msg: IncomingMessage) -> None:
+        """只把訊息記進上下文、不做任何回覆判斷(用於其他 bot 的發言)。"""
+        if not msg.content.strip() or not self._decision.channel_allowed(msg.channel_id):
+            return
+        self._context.add(msg.channel_id, msg.author, msg.content, is_self=False)
+
     def reaction_for(self, msg: IncomingMessage) -> str | None:
         return self._reaction.decide_self_reaction(msg)
 
@@ -86,8 +92,7 @@ class ChatPipeline:
         if self.context_revision(channel_id) != revision:
             return PipelineResult()
         for item in messages:
-            if not item.author_is_bot:
-                self._context.add(channel_id, item.author, item.content, is_self=False)
+            self._context.add(channel_id, item.author, item.content, is_self=False)
 
         auto_gif = None
         if self._gifs is not None and self._decision.skip_reason(msg) is None:
