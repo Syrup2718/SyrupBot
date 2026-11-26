@@ -185,7 +185,7 @@ class ChatPipeline:
         self.monitor.record(events.LULL, channel_id, text=reply, detail="冷場主動開口")
         logger.debug("頻道 %s 冷場,角色主動開口", channel_id)
         return PipelineResult(
-            replies=split_chat_reply(self._link(channel_id, reply, None)),
+            replies=split_chat_reply(self._link(channel_id, reply)),
             context_revision=revision,
         )
 
@@ -265,14 +265,14 @@ class ChatPipeline:
             return gif_only
 
         return replace(
-            gif_only, replies=split_chat_reply(self._link(channel_id, reply, msg.author_id))
+            gif_only, replies=split_chat_reply(self._link(channel_id, reply))
         )
 
-    def _link(self, channel_id: int, reply: str, skip_id: int | None) -> str:
+    def _link(self, channel_id: int, reply: str) -> str:
         """把回覆裡的「@名字」換成真的 tag(只限最近講過話的人)。"""
         if not self._tag_members:
             return reply
-        return link_mentions(reply, self._context.speakers(channel_id), skip_id=skip_id)
+        return link_mentions(reply, self._context.speakers(channel_id))
 
     def clear_context(self, channel_id: int) -> int:
         """清空本頻道的短期記憶與連續對話。"""

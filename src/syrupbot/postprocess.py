@@ -196,7 +196,7 @@ def _match_name(text: str, start: int, folded_name: str) -> int | None:
 
 def link_mentions(
     text: str, members: dict[str, int], *, skip_id: int | None = None,
-    max_tags: int = 1,
+    max_tags: int | None = None,
 ) -> str:
     """把模型寫的「@名字」換成真正的 Discord tag(<@ID>)。
 
@@ -204,7 +204,7 @@ def link_mentions(
       名字長的優先,避免「小明」吃掉「小明明」。
     - skip_id 是她正在回的人:對方本來就知道在跟他說話,不必再 tag。
       寫在行首就整個拿掉,寫在句中改成純文字名字。
-    - 一則最多 max_tags 個真的 tag,超過的改成純文字名字,避免一次吵很多人。
+    - max_tags 可限制一則最多幾個真的 tag(預設不限),超過的改成純文字名字。
     - 對不到任何人的「@」直接拿掉,不留下看起來壞掉的 tag。
     """
     names = sorted(
@@ -231,7 +231,7 @@ def link_mentions(
         name, user_id, end = found
         pos = end
         at_line_start = not "".join(out).rsplit("\n", 1)[-1].strip()
-        if user_id != skip_id and tags < max_tags:
+        if user_id != skip_id and (max_tags is None or tags < max_tags):
             out.append(f"<@{user_id}>")
             tags += 1
         elif at_line_start:
