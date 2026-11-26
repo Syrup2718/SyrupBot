@@ -6,12 +6,18 @@
 
 from __future__ import annotations
 
+import json
+import math
 import os
 from dataclasses import dataclass
+from pathlib import Path
 
 from dotenv import load_dotenv
 
-# 在讀取任何環境變數前先載入 .env(若存在)。
+DEFAULT_TURN_WINDOW_SECONDS = 0.8
+
+# 優先載入本機 LLM 設定，再由 .env 補齊；程序環境變數優先於兩個檔案。
+load_dotenv(Path(__file__).resolve().parents[2] / "llm.local.env")
 load_dotenv()
 
 
@@ -49,9 +55,16 @@ class Config:
     channel_policy_path: str = "data/channels.json"
     # ── 表情符號回應(新欄位一律給預設值,避免既有的 Config(**...) 呼叫壞掉)──
     reactions_enabled: bool = True
-    self_reaction_probability: float = 0.1  # 看到訊息時,自己貼表情的機率
-    follow_reaction_probability: float = 0.3  # 別人按了表情時,跟著按的機率
+    self_reaction_probability: float = 0.2  # 看到訊息時,自己貼表情的機率
+    follow_reaction_probability: float = 0.5  # 別人按了表情時,跟著按的機率
     follow_reaction_min_count: int = 2  # 至少要有幾個人按過,才考慮跟著按
+    disable_thinking: bool = False
+    llama_server_exe: str | None = None
+    llama_server_args: tuple[str, ...] = ()
+    turn_window_seconds: float = DEFAULT_TURN_WINDOW_SECONDS
+    gifs_enabled: bool = True
+    gif_reply_probability: float = 0.12
+    gif_cooldown_seconds: float = 90.0
 
     @classmethod
     def from_env(cls) -> "Config":
@@ -73,7 +86,29 @@ class Config:
                 f"DECISION_STRATEGY 必須是 'heuristic' 或 'llm',收到:{strategy!r}"
             )
 
+        llama_exe = os.environ.get("LLAMA_SERVER_EXE") or None
+        llama_args: tuple[str, ...] = ()
+        if llama_exe:
+            try:
+                args = json.loads(os.environ.get("LLAMA_SERVER_ARGS", "[]"))
+            except json.JSONDecodeError as exc:
+                raise RuntimeError("LLAMA_SERVER_ARGS 必須是 JSON 字串陣列") from exc
+            if not isinstance(args, list) or not all(isinstance(x, str) for x in args):
+                raise RuntimeError("LLAMA_SERVER_ARGS 必須是 JSON 字串陣列")
+            llama_args = tuple(args)
+
         model = os.environ.get("DEEPSEEK_MODEL", "deepseek-chat")
+        turn_window = float(
+            os.environ.get("TURN_WINDOW_SECONDS", str(DEFAULT_TURN_WINDOW_SECONDS))
+        )
+        if not math.isfinite(turn_window) or turn_window < 0:
+            raise ValueError("TURN_WINDOW_SECONDS 必須是有限且非負的秒數")
+        gif_probability = float(os.environ.get("GIF_REPLY_PROBABILITY", "0.12"))
+        if not 0 <= gif_probability <= 1:
+            raise ValueError("GIF_REPLY_PROBABILITY 必須介於 0 和 1")
+        gif_cooldown = float(os.environ.get("GIF_COOLDOWN_SECONDS", "90"))
+        if not math.isfinite(gif_cooldown) or gif_cooldown < 0:
+            raise ValueError("GIF_COOLDOWN_SECONDS 必須是有限且非負的秒數")
         return cls(
             discord_token=os.environ["DISCORD_TOKEN"],
             deepseek_api_key=os.environ["DEEPSEEK_API_KEY"],
@@ -105,12 +140,19 @@ class Config:
                 os.environ.get("REACTIONS_ENABLED", "true")
             ),
             self_reaction_probability=float(
-                os.environ.get("SELF_REACTION_PROBABILITY", "0.1")
+                os.environ.get("SELF_REACTION_PROBABILITY", "0.2")
             ),
             follow_reaction_probability=float(
-                os.environ.get("FOLLOW_REACTION_PROBABILITY", "0.3")
+                os.environ.get("FOLLOW_REACTION_PROBABILITY", "0.5")
             ),
             follow_reaction_min_count=int(
                 os.environ.get("FOLLOW_REACTION_MIN_COUNT", "2")
             ),
+            disable_thinking=_parse_bool(os.environ.get("LLM_DISABLE_THINKING", "false")),
+            llama_server_exe=llama_exe,
+            llama_server_args=llama_args,
+            turn_window_seconds=turn_window,
+            gifs_enabled=_parse_bool(os.environ.get("GIFS_ENABLED", "true")),
+            gif_reply_probability=gif_probability,
+            gif_cooldown_seconds=gif_cooldown,
         )

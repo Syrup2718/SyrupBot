@@ -1,7 +1,10 @@
 # 環境變數與密鑰
 .env
+.env.*
 *.env
+*.env.*
 !.env.example
+!llm.local.env.example
 
 # Python
 __pycache__/
@@ -16,12 +19,18 @@ env/
 
 # 執行期狀態（頻道設定等，由 bot 在執行時寫入）
 data/
+*.log
+
+# llama.cpp 模型與本機模型快取
+*.gguf
+/models/
 
 # 測試與快取
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
 .coverage
+.coverage.*
 htmlcov/
 
 # 編輯器 / 作業系統

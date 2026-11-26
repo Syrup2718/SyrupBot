@@ -25,6 +25,7 @@ class ConversationStore:
 
     def __init__(self, max_messages: int) -> None:
         self._max_messages = max_messages
+        self._revisions: dict[int, int] = {}
         self._channels: dict[int, deque[ContextMessage]] = defaultdict(
             lambda: deque(maxlen=max_messages)
         )
@@ -39,6 +40,10 @@ class ConversationStore:
         """回傳某頻道目前的上下文(依時間排序)。"""
         return list(self._channels[channel_id])
 
+    def usage(self, channel_id: int) -> tuple[int, int]:
+        """回傳頻道目前保留的訊息數及上限。"""
+        return len(self._channels.get(channel_id, ())), self._max_messages
+
     def has_recent_self(self, channel_id: int, lookback: int = 4) -> bool:
         """角色最近是否參與了這串對話(用來判斷要不要延續話題)。"""
         recent = list(self._channels[channel_id])[-lookback:]
@@ -52,6 +57,11 @@ class ConversationStore:
             lines.append(f"{speaker}:{msg.content}")
         return "\n".join(lines)
 
-    def clear(self, channel_id: int) -> None:
-        """清除某頻道的上下文。"""
-        self._channels.pop(channel_id, None)
+    def revision(self, channel_id: int) -> int:
+        """取得某頻道的清除版本，用來辨識清除前開始的回覆。"""
+        return self._revisions.get(channel_id, 0)
+
+    def clear(self, channel_id: int) -> int:
+        """清除某頻道的上下文，並回傳移除的訊息數。"""
+        self._revisions[channel_id] = self.revision(channel_id) + 1
+        return len(self._channels.pop(channel_id, ()))

@@ -1,38 +1,66 @@
 # SyrupBot
 
-一個「住在 Discord 群組裡」的 LLM 聊天角色,由 **Python + discord.py + DeepSeek API** 打造。
+漿糖是一個住在 Discord 群組裡的聊天角色。她會讀取近期對話，自行決定何時插話或貼表情，
+通常用一兩句話回覆。專案使用 Python 3.11+ 和 discord.py，支援 DeepSeek 與本機 llama.cpp。
 
-她不是被 `/ask`、`/chat` 或 tag 才回答的工具型 bot,而是像群組裡的一個成員:
-會看大家在聊什麼、**自己判斷什麼時候適合插話、什麼時候安靜**,並用簡短、自然、
-可愛的語氣回覆——目標是讓人覺得親近,而不是在跟 AI 講話。
-
-> 設計理念參考 [MaiBot](https://github.com/Mai-with-u/MaiBot) 的方向(更像真人,
-> 而非更像完美助手),但**並非複製其程式碼或架構**,僅參考互動理念。
+群聊互動設計參考 [MaiBot](https://github.com/Mai-with-u/MaiBot)。
 
 ## 快速開始
 
-```bash
-# 1. 建立並啟用虛擬環境（建議，避免污染系統 Python；需要 Python 3.11+）
+從專案根目錄執行。Windows PowerShell 安裝指令如下。
+
+```powershell
 python -m venv .venv
-source .venv/bin/activate          # Windows PowerShell: .\.venv\Scripts\Activate.ps1
-
-# 2. 安裝相依
-python -m pip install -e ".[dev]"
-
-# 3. 設定環境變數
-cp .env.example .env               # 填入 DISCORD_TOKEN 與 DEEPSEEK_API_KEY
-
-# 4. 啟動
-python -m syrupbot
+.\.venv\Scripts\python.exe -m pip install -e .
+if (-not (Test-Path .env)) { Copy-Item .env.example .env }
 ```
 
-啟動前的兩個準備:
+Linux 使用 `.venv/bin/python`，首次設定時用 `cp -n .env.example .env`。常駐服務請參考
+[Debian／systemd 部署說明](deploy/README.md)。
 
-1. 在 [Discord Developer Portal](https://discord.com/developers/applications)
-   為 bot 開啟 **Message Content Intent**,否則它讀不到群組訊息內容。
-2. 用 OAuth2 URL 把 bot **邀請進你的伺服器**:
-   - SCOPES 勾 **`bot`** 和 **`applications.commands`**(後者才有 `/漿糖` 斜線指令)。
-   - BOT PERMISSIONS 至少 `Send Messages` + `Read Message History` + `Add Reactions`。
+1. 在 Discord Developer Portal 開啟 **Message Content Intent**，並把 bot token 填進 `.env`
+   的 `DISCORD_TOKEN`。 [Discord Developer Portal](https://discord.com/developers/applications)
+2. 邀請 bot 時選擇 `bot` 和 `applications.commands` scope，並給它預計互動頻道的
+   `View Channel`、`Send Messages`、`Read Message History` 和 `Add Reactions` 權限。
+3. 選擇模型來源。使用 **DeepSeek** 時，在 `.env` 填入 `DEEPSEEK_API_KEY`。
+   使用 **llama.cpp** 時，依下方說明建立 `llm.local.env`。
+4. 啟動後看到「已登入」，就可以在允許互動的頻道 `@漿糖` 測試。
+
+```powershell
+.\.venv\Scripts\python.exe -m syrupbot
+```
+
+## 使用本機 llama.cpp
+
+先準備與電腦相容的 `llama-server`。範本使用 Windows CUDA 執行檔，在 `9932` 埠啟動
+Qwen3.5 9B，模型 alias 為 `qwen-chat`，context 為 `16384`。首次設定時執行：
+
+```powershell
+if (-not (Test-Path llm.local.env)) {
+    Copy-Item llm.local.env.example llm.local.env
+}
+```
+
+| 設定項目 | 如何調整 |
+| --- | --- |
+| `LLAMA_SERVER_EXE` | 填入本機執行檔路徑。手動啟動服務時留空。 |
+| `LLAMA_SERVER_ARGS` | JSON 字串陣列。模型、GPU 和 context 等參數可以在這裡調整。 |
+| `DEEPSEEK_BASE_URL` | 自動啟動使用 `http://127.0.0.1:<port>/v1`，host 和 port 會帶入啟動參數。 |
+| `DEEPSEEK_MODEL` | 自動啟動時用作 alias。手動啟動時填 `/v1/models` 回傳的模型 ID。 |
+| `DECISION_MODEL` | `llm` 策略使用的模型。更換生成模型時，可一併改成同一個 ID。 |
+| `DEEPSEEK_API_KEY` | 服務未啟用 API 驗證時可用範本的 `local-no-key`。 |
+| `LLM_DISABLE_THINKING` | 範本為 `true`，適用於支援 `enable_thinking` 的模型。 |
+
+想試用短思考時，把 `LLM_DISABLE_THINKING` 設為 `false`，在 `LLAMA_SERVER_ARGS` 陣列
+加上 `"--reasoning", "on", "--reasoning-budget", "64"`，再重啟 bot 和 llama.cpp。
+`64` 是思考的 token 預算，回覆本身與實際耗時會另外計算。
+
+自動啟動時，bot 會等模型就緒才登入 Discord。已有同一模型在監聽時會共用該服務，
+關閉 bot 時只會停止它自己啟動的模型程序。若啟動失敗，查看同一終端機的 `llama-server` 輸出。
+
+`DEEPSEEK_*` 同時用於設定 OpenAI 相容的本機 API。設定優先序為
+**程序環境變數 → `llm.local.env` → `.env`**。重新啟動 bot 後套用。移開 `llm.local.env`
+並重新啟動，即可回到 `.env` 的設定。 [本機設定範本](llm.local.env.example)
 
 ## 她怎麼決定要不要說話
 
@@ -41,72 +69,106 @@ python -m syrupbot
 ```
 讀訊息 + 該頻道近期上下文
   → 判斷要不要回（預設用機率+加權規則，免費快速）
-  → 要回的話，帶人設與上下文呼叫 DeepSeek
+  → 要回的話，將人設與上下文交給選定的模型
   → 把回覆「去 AI 化」：修語氣、砍客服腔、切短、加打字延遲
   → 送回 Discord
 ```
 
-被 **@ 提及**或**被回覆**時她幾乎一定會回;一般訊息則看情況。判斷策略可用
-環境變數 `DECISION_STRATEGY` 在 `heuristic`(規則)與 `llm`(讓模型讀氣氛判斷)
-之間切換。
+通過頻道與指令過濾後，**@ 漿糖**或**回覆她的訊息**會直接觸發回覆。一般訊息則由
+`DECISION_STRATEGY` 決定。`heuristic` 使用本機規則與機率，`llm` 會請模型依上下文判斷。
+
+同一成員在同一頻道連發時，漿糖預設等約 0.8 秒，最多把四則合成一個回合判斷一次。
+換人發言時會結束前一個回合。每個頻道按順序判斷、生成和送出，回覆確認送出才會進入短期記憶。
+
+漿糖剛回覆你時，60 秒內接一句「你呢？」或「所以你剛剛說什麼？」也會直接回覆。
+其他成員插話，或你明確轉向其他成員時，這段連續對話就會中斷。
+
+較長的回覆會在句尾或換行處拆成幾則，中間停一下再接著送出。
 
 ## 她也會按表情符號
 
-除了講話,漿糖還會對訊息貼表情:**看到訊息時自己依機率挑表情貼**(關鍵字優先,
-對不到就從通用表情池隨機挑),也會**跟著別人一起按**(別人按了、達門檻人數就跟)。
-表情對應表在 [`personas/syrup.toml`](personas/syrup.toml) 的 `[reactions]`,行為機率
-用下方旋鈕調。需要伺服器的 `Add Reactions` 權限。
+漿糖會依機率主動貼表情，優先選用與關鍵字對應的表情，其他時候從通用表情池挑選。
+其他成員按的表情達到門檻後，她也有機會跟著按。表情對應表在角色檔的 `[reactions]`。
+[角色設定](personas/syrup.toml)
 
-## 管理員指令(指定她在哪些頻道講話)
+## 發 GIF
 
-有「管理伺服器」權限的人,可以用斜線指令即時控制漿糖在哪些頻道活動(其他人看不到
-這些指令)。設定會存進 `data/channels.json`,**重啟後不會忘**。
+在允許互動的頻道說 `@漿糖 發月薪貓` 就會從系列中挑一張。也可以指定動作，例如
+`@漿糖 發個月薪貓跳舞的貼圖`。平時聊天命中個別貼圖的關鍵字時，漿糖會另外決定是否發 GIF。
+Discord 要在頻道內直接預覽動圖，需要 `Embed Links` 權限。
+
+動圖和關鍵字可在角色設定檔的 `[gifs]` 修改。每個 `stickers` 項目對應一張動圖，包含
+`label`、`keywords` 和公開 HTTPS `.gif` 直連 `url`。命中多張時優先使用較長的關鍵字。
+在 `.env` 可用 `GIFS_ENABLED` 關閉功能，或調整 `GIF_REPLY_PROBABILITY`（預設 12%）
+和 `GIF_COOLDOWN_SECONDS`（同一頻道自動發圖預設至少間隔 90 秒）。
+
+## 查看模型狀態
+
+伺服器成員可輸入 `/llmstatus`，查看模型名稱、本頻道保留的上下文訊息數、bot 進行中的
+模型請求數，以及本頻道最近一次完成請求的時間與 token 用量。Embed 卡片只對執行者顯示。
+
+llama.cpp 回傳速度時，會顯示輸入處理與生成的 tok/s。其他 API 若只回傳 token 數，則以
+整次請求的耗時計算平均輸出速度。輸入 token 包含人設與該次請求的對話上下文。
+查詢使用 bot 在記憶體中記錄的數字，不會另外呼叫模型。
+
+## 管理員指令
+
+`/llmclear` 可清空漿糖在目前頻道的短期記憶。需要「管理訊息」權限，結果只對執行者顯示。
+此指令只清除 bot 的記憶，Discord 上的訊息與其他頻道不受影響。
+
+有「管理伺服器」權限的人可以用 `/set` 即時調整允許互動的頻道。指令回應只對執行者
+顯示，設定會保存在 `data/channels.json`。
 
 | 指令 | 作用 |
 |---|---|
-| `/漿糖 開啟 頻道:#x` | 讓她可以在 #x 講話(加進允許清單) |
-| `/漿糖 關閉 頻道:#x` | 讓她不要在 #x 講話(移出允許清單) |
-| `/漿糖 只在 頻道:#x` | 只在 #x 講話 |
-| `/漿糖 全部開放` | 取消限制,所有頻道都能講 |
-| `/漿糖 狀態` | 看目前允許哪些頻道 |
+| `/set channel channel:#x` | 只在 #x 回話和貼表情 |
+| `/set allow channel:#x` | 把 #x 加入允許清單 |
+| `/set remove channel:#x` | 把 #x 移出允許清單 |
+| `/set all` | 解除頻道限制 |
+| `/set status` | 查看目前允許互動的頻道 |
 
 > 語意是**允許清單**:清單為空 = 所有頻道都可以(預設)。一旦清單有內容,就只在清單內
-> 的頻道講話與貼表情。`ALLOWED_CHANNEL_IDS` 是開機初始值,之後以指令的結果為準。
+> 的頻道講話與貼表情。移除最後一個頻道也會回到全部開放。
+> `ALLOWED_CHANNEL_IDS` 是初始值，有存檔後以 `data/channels.json` 為準。
 >
 > ⚠️ 斜線指令需要邀請時帶 **`applications.commands`** scope。若指令沒出現,多半是
 > 當初邀請只給了 `bot` scope —— 用含兩個 scope 的網址**重新邀請一次**即可(不會踢掉
 > bot、不會掉資料)。
 
-## 可調旋鈕(`.env`)
+## 回覆與表情設定
 
-改完重啟即生效(systemd:`sudo systemctl restart syrupbot`)。全部都有預設值,不填也能跑。
+下列選項可以在 `.env` 調整，重啟 bot 後生效。
 
 | 變數 | 預設 | 作用 |
 |---|---|---|
 | `DECISION_STRATEGY` | `heuristic` | 判斷要不要回的策略:`heuristic`(機率規則,免費)或 `llm`(讀氣氛判斷,每則花 token) |
 | `REPLY_PROBABILITY` | `0.08` | heuristic 下,一般訊息的基礎插話機率(調高=更愛講話) |
+| `TURN_WINDOW_SECONDS` | `0.8` | 收集同一成員連發的時間，`0` 可關閉合併 |
 | `REPLY_COOLDOWN_SECONDS` | `20` | 同頻道兩次主動回覆的最短間隔,防洗版 |
 | `DECISION_COOLDOWN_SECONDS` | `10` | llm 策略下,每頻道觸發判斷的最短間隔,控 API 成本 |
 | `MAX_CONTEXT_MESSAGES` | `20` | 餵給模型的近期訊息數 |
 | `ALLOWED_CHANNEL_IDS` | (空) | 留空=所有頻道;填逗號分隔的頻道 ID=只在這些頻道互動 |
 | `LLM_TEMPERATURE` | `1.1` | 回覆生成溫度,偏高讓語氣更口語 |
 | `REACTIONS_ENABLED` | `true` | 表情功能總開關 |
-| `SELF_REACTION_PROBABILITY` | `0.1` | 看到訊息時自己貼表情的機率 |
-| `FOLLOW_REACTION_PROBABILITY` | `0.3` | 別人按了表情時跟著按的機率 |
+| `SELF_REACTION_PROBABILITY` | `0.2` | 看到訊息時自己貼表情的機率 |
+| `FOLLOW_REACTION_PROBABILITY` | `0.5` | 別人按了表情時跟著按的機率 |
 | `FOLLOW_REACTION_MIN_COUNT` | `2` | 至少幾人按過她才跟(`1`=有人按就可能跟) |
 
 > 完整變數說明見 [`.env.example`](.env.example)。
 
 ## 自訂人設
 
-角色設定放在 [`personas/syrup.toml`](personas/syrup.toml),是純文字,直接編輯即可
-調整名字、個性、說話習慣、語助詞、範例對話與表情對應表,**不需要改程式碼**。
+漿糖的預設人設是 16 歲的少女網友，有雪白中長髮、琥珀橘雙眼和橘色四角星髮夾，喜歡
+遊戲、音樂和迷因。角色 TOML 可調整名字、個性、說話習慣、範例對話
+與表情，修改後重啟 bot。 [角色設定](personas/syrup.toml)
 
 ## 開發
 
 ```bash
+python -m pip install -e ".[dev]"
 python -m pytest -q     # 執行測試
 ruff check .            # Lint
 ```
 
-詳細架構與開發指引見 [CLAUDE.md](CLAUDE.md)。
+測試使用假的 LLM 和測試資料，可在未啟動 Discord 或 llama.cpp 的情況下執行。
+架構和修改慣例見 [AGENTS.md](AGENTS.md)。

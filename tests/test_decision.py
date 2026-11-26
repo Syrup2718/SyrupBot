@@ -25,7 +25,10 @@ class FakeLLM:
         self._reply = reply
         self.judge_calls = 0
 
-    async def judge_and_reply(self, system_prompt: str, transcript: str):
+    async def judge_and_reply(
+        self, system_prompt: str, transcript: str, *, channel_id: int | None = None,
+        latest_message: tuple[str, str] | None = None,
+    ):
         self.judge_calls += 1
         return self._should_reply, self._reply
 
@@ -192,6 +195,61 @@ async def test_mention_bypasses_cooldown() -> None:
     assert decision.should_reply is True
 
 
+# ── 連續對話 ──
+
+
+@pytest.mark.parametrize("strategy", ["heuristic", "llm"])
+@pytest.mark.parametrize("content", ["你呢？", "欸，那你覺得勒", "我想問妳剛剛說的"])
+async def test_follow_up_bypasses_decision_and_cooldown(strategy, content):
+    llm = FakeLLM(should_reply=False)
+    engine, _ = _engine(_base_config(decision_strategy=strategy), llm=llm, clock=Clock())
+    engine.record_reply(1)
+    turn = _msg(author_id=10, content=content)
+    assert not (await engine.decide(turn)).should_reply
+
+    engine.record_delivered_reply(_msg(author_id=10))
+    decision = await engine.decide(turn)
+    assert decision.should_reply
+    assert decision.reply is None
+    assert llm.judge_calls == 0
+    assert not (await engine.decide(turn)).should_reply
+
+    engine.record_delivered_reply(turn)
+    assert (await engine.decide(turn)).should_reply
+
+
+@pytest.mark.parametrize("interruption", [
+    {"author_id": 99},
+    {"author_id": 10, "addresses_others": True},
+])
+async def test_follow_up_ignores_other_recipients_and_interruptions(interruption):
+    engine, _ = _engine(_base_config(), clock=Clock(), rng=_FixedRandom(0.99))
+    engine.record_reply(1)
+    engine.record_delivered_reply(_msg(author_id=10))
+
+    assert not (await engine.decide(_msg(content="你呢？", **interruption))).should_reply
+    assert not (await engine.decide(_msg(author_id=10, content="你覺得呢？"))).should_reply
+
+
+async def test_follow_up_requires_fresh_and_direct_address():
+    clock = Clock()
+    engine, _ = _engine(_base_config(), clock=clock, rng=_FixedRandom(0.99))
+    engine.record_delivered_reply(_msg(author_id=10))
+    for content in ("你們覺得呢？", "我在找你的作業", "他問『你會嗎』"):
+        assert not (await engine.decide(_msg(author_id=10, content=content))).should_reply
+
+    clock.now += 60
+    assert not (await engine.decide(_msg(author_id=10, content="你會嗎？"))).should_reply
+
+
+async def test_follow_up_is_channel_local():
+    engine, _ = _engine(_base_config(), clock=Clock(), rng=_FixedRandom(0.99))
+    engine.record_delivered_reply(_msg(author_id=10))
+    follow_up = _msg(author_id=10, content="你呢？")
+    assert not (await engine.decide(replace(follow_up, channel_id=2))).should_reply
+    assert (await engine.decide(follow_up)).should_reply
+
+
 # ── 第二關:llm 策略 ──
 
 
@@ -231,7 +289,3 @@ class _FixedRandom(Random):
 
     def random(self) -> float:  # type: ignore[override]
         return self._value
-
-
-# replace 供未來擴充測試使用(目前保留以示範 Config 為不可變)。
-_ = replace

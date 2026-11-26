@@ -13,8 +13,10 @@ import discord
 from discord import app_commands
 
 from .channels import ChannelPolicy
+from .config import DEFAULT_TURN_WINDOW_SECONDS
 from .decision import IncomingMessage
-from .pipeline import ChatPipeline
+from .pipeline import ChatPipeline, LLMStatus, PipelineResult
+from .turns import PendingTurn, TurnScheduler
 
 logger = logging.getLogger(__name__)
 
@@ -22,12 +24,68 @@ logger = logging.getLogger(__name__)
 _TYPING_SECONDS_PER_CHAR = 0.05
 _TYPING_MIN_SECONDS = 0.8
 _TYPING_MAX_SECONDS = 4.0
+_NEXT_CHUNK_DELAY = 0.6
+
+
+def _count(value: int | None) -> str:
+    return f"{value:,}" if value is not None else "未提供"
+
+
+def _llm_status_embed(status: LLMStatus) -> discord.Embed:
+    embed = discord.Embed(title="漿糖的模型狀態", colour=0xE68BA7)
+    models = f"生成 `{status.model[:250]}`"
+    if status.decision_model != status.model:
+        models += f"\n決策 `{status.decision_model[:250]}`"
+    embed.add_field(name="模型", value=models, inline=False)
+    embed.add_field(
+        name="本頻道上下文",
+        value=f"**{status.context_count:,} / {status.context_limit:,}** 則訊息",
+    )
+    embed.add_field(name="進行中的請求", value=f"**{status.in_flight:,}**（全 bot）")
+
+    stats = status.last_completion
+    if stats is None:
+        embed.add_field(
+            name="最近一次請求",
+            value="本頻道自啟動以來還沒有完成的請求。",
+            inline=False,
+        )
+        return embed
+
+    kind = "判斷是否插話" if stats.judge else "生成回覆"
+    embed.add_field(
+        name="最近一次請求",
+        value=f"{kind} · `{stats.model[:250]}` · **{stats.seconds:.2f} 秒**",
+        inline=False,
+    )
+    embed.add_field(
+        name="Token 用量",
+        value=(
+            f"輸入 **{_count(stats.prompt_tokens)}**"
+            f" · 輸出 **{_count(stats.completion_tokens)}**"
+            f" · 總計 **{_count(stats.total_tokens)}**"
+        ),
+        inline=False,
+    )
+    if stats.prompt_tps is not None:
+        embed.add_field(name="輸入處理速度", value=f"**{stats.prompt_tps:.1f}** tok/s")
+    if stats.generation_tps is not None:
+        embed.add_field(name="生成速度", value=f"**{stats.generation_tps:.1f}** tok/s")
+    elif stats.completion_tokens is not None and stats.seconds > 0:
+        average = stats.completion_tokens / stats.seconds
+        embed.add_field(name="平均輸出速度", value=f"**{average:.1f}** tok/s（含等候）")
+    else:
+        embed.add_field(name="生成速度", value="未提供")
+    return embed
 
 
 class SyrupBot(discord.Client):
     """收 Discord 訊息事件,交給 pipeline 處理並回覆。"""
 
-    def __init__(self, pipeline: ChatPipeline, channel_policy: ChannelPolicy) -> None:
+    def __init__(
+        self, pipeline: ChatPipeline, channel_policy: ChannelPolicy,
+        *, turn_window_seconds: float = DEFAULT_TURN_WINDOW_SECONDS,
+    ) -> None:
         intents = discord.Intents.default()
         # message_content 是特權 intent,需在 Developer Portal 開啟,
         # 否則讀不到一般訊息的文字內容。
@@ -37,6 +95,8 @@ class SyrupBot(discord.Client):
         super().__init__(intents=intents)
         self._pipeline = pipeline
         self._policy = channel_policy
+        self._turns = TurnScheduler(turn_window_seconds)
+        self._turn_locks: dict[int, asyncio.Lock] = {}
         self.tree = app_commands.CommandTree(self)
         self._synced = False
         self._register_commands()
@@ -59,87 +119,133 @@ class SyrupBot(discord.Client):
                 )
 
     def _register_commands(self) -> None:
-        """註冊管理員用的 /漿糖 斜線指令(限有「管理伺服器」權限的人)。"""
+        """註冊伺服器的狀態查詢與管理指令。"""
+        @self.tree.command(name="llmstatus", description="查看模型與本頻道上下文狀態")
+        @app_commands.guild_only()
+        async def llmstatus(interaction: discord.Interaction) -> None:
+            if interaction.channel_id is None:
+                await interaction.response.send_message(
+                    "目前無法辨識這個頻道。", ephemeral=True
+                )
+                return
+            status = self._pipeline.llm_status(interaction.channel_id)
+            await interaction.response.send_message(
+                embed=_llm_status_embed(status),
+                ephemeral=True,
+                allowed_mentions=discord.AllowedMentions.none(),
+            )
+
+        @self.tree.command(name="llmclear", description="清空漿糖在本頻道的短期記憶")
+        @app_commands.guild_only()
+        @app_commands.default_permissions(manage_messages=True)
+        async def llmclear(interaction: discord.Interaction) -> None:
+            if interaction.channel_id is None:
+                text = "目前無法辨識這個頻道。"
+            elif not interaction.permissions.manage_messages:
+                text = "清除本頻道的記憶需要「管理訊息」權限。"
+            else:
+                count = self._pipeline.clear_context(interaction.channel_id)
+                self._turns.finish(interaction.channel_id)
+                text = f"已清除本頻道的短期記憶（{count} 則）。"
+            await interaction.response.send_message(text, ephemeral=True)
+
         group = app_commands.Group(
-            name="漿糖",
-            description="管理漿糖(限有「管理伺服器」權限的人)",
+            name="set",
+            description="設定漿糖可以互動的頻道",
             guild_only=True,
             default_permissions=discord.Permissions(manage_guild=True),
         )
 
-        @group.command(name="開啟", description="讓漿糖可以在指定頻道講話")
-        @app_commands.describe(頻道="要讓她講話的頻道")
-        async def 開啟(
-            interaction: discord.Interaction, 頻道: discord.TextChannel
+        @group.command(name="allow", description="把指定頻道加入允許清單")
+        @app_commands.describe(channel="要加入的文字頻道")
+        async def allow_channel(
+            interaction: discord.Interaction, channel: discord.TextChannel
         ) -> None:
-            self._policy.allow(頻道.id)
+            self._policy.allow(channel.id)
             await interaction.response.send_message(
-                f"好喔～我可以在 {頻道.mention} 講話了 🥰", ephemeral=True
+                f"好喔～我可以在 {channel.mention} 互動了 🥰", ephemeral=True
             )
 
-        @group.command(name="關閉", description="讓漿糖不要在指定頻道講話")
-        @app_commands.describe(頻道="要讓她安靜的頻道")
-        async def 關閉(
-            interaction: discord.Interaction, 頻道: discord.TextChannel
+        @group.command(name="remove", description="把指定頻道移出允許清單")
+        @app_commands.describe(channel="要移出的文字頻道")
+        async def remove_channel(
+            interaction: discord.Interaction, channel: discord.TextChannel
         ) -> None:
-            self._policy.disallow(頻道.id)
+            self._policy.disallow(channel.id)
             if self._policy.restricted:
-                text = f"好,我不會在 {頻道.mention} 講話了"
+                text = f"已將 {channel.mention} 移出允許清單。"
             else:
-                text = (
-                    f"已把 {頻道.mention} 移出清單。目前沒有指定頻道,"
-                    "我在所有頻道都會講話喔"
-                )
+                text = "目前允許清單是空的，我可以在所有看得到的頻道互動喔。"
             await interaction.response.send_message(text, ephemeral=True)
 
-        @group.command(name="只在", description="讓漿糖只在這一個頻道講話")
-        @app_commands.describe(頻道="唯一允許的頻道")
-        async def 只在(
-            interaction: discord.Interaction, 頻道: discord.TextChannel
+        @group.command(name="channel", description="讓漿糖只在指定頻道互動")
+        @app_commands.describe(channel="唯一允許的文字頻道")
+        async def set_channel(
+            interaction: discord.Interaction, channel: discord.TextChannel
         ) -> None:
-            self._policy.only(頻道.id)
+            self._policy.only(channel.id)
             await interaction.response.send_message(
-                f"好～我只會在 {頻道.mention} 講話", ephemeral=True
+                f"好～我只會在 {channel.mention} 回話和貼表情。", ephemeral=True
             )
 
-        @group.command(
-            name="全部開放", description="取消頻道限制,讓漿糖在所有頻道都能講話"
-        )
-        async def 全部開放(interaction: discord.Interaction) -> None:
+        @group.command(name="all", description="解除互動的頻道限制")
+        async def allow_all_channels(interaction: discord.Interaction) -> None:
             self._policy.clear()
             await interaction.response.send_message(
-                "好～我在所有看得到的頻道都會講話了", ephemeral=True
+                "好～我在所有看得到的頻道都可以互動了。", ephemeral=True
             )
 
-        @group.command(name="狀態", description="看漿糖目前允許在哪些頻道講話")
-        async def 狀態(interaction: discord.Interaction) -> None:
+        @group.command(name="status", description="查看漿糖目前允許互動的頻道")
+        async def channel_status(interaction: discord.Interaction) -> None:
             ids = self._policy.allowed_ids()
             if not ids:
-                text = "目前沒有限制,我在所有看得到的頻道都會講話~"
+                text = "目前所有看得到的頻道都允許互動。"
             else:
-                mentions = "、".join(f"<#{cid}>" for cid in ids)
-                text = f"目前我只在這些頻道講話:{mentions}"
+                mentions = "、".join(f"<#{cid}>" for cid in sorted(ids))
+                text = f"目前只會在這些頻道互動：{mentions}"
             await interaction.response.send_message(text, ephemeral=True)
 
         self.tree.add_command(group)
 
     async def on_message(self, message: discord.Message) -> None:
-        # 永遠不處理自己的訊息(其他 bot 由 decision 層再過濾)。
-        if message.author == self.user:
+        if message.author.bot:
             return
 
         incoming = self._to_incoming(message)
-        try:
-            result = await self._pipeline.handle(incoming)
-        except Exception:  # noqa: BLE001 — 單則訊息失敗不該拖垮整個 bot。
-            logger.exception("處理訊息時發生錯誤")
+        turn = self._turns.submit(
+            incoming, self._pipeline.context_revision(incoming.channel_id),
+            merge=self._pipeline.can_merge(incoming),
+        )
+        reaction = self._pipeline.reaction_for(incoming)
+        if turn is None:
+            if reaction is not None:
+                await self._react(message, reaction)
             return
 
-        # 先貼表情(若有),再(可能)回話。
-        if result.reaction:
-            await self._react(message, result.reaction)
-        for chunk in result.replies:
-            await self._send_like_human(message.channel, chunk)
+        # 讓回合先在當前事件排隊，表情可以獨立送，避免下一個回合超車。
+        reaction_task = (
+            asyncio.create_task(self._react(message, reaction)) if reaction else None
+        )
+        try:
+            await self._process_turn(message.channel, turn)
+        finally:
+            if reaction_task is not None:
+                await reaction_task
+
+    async def _process_turn(
+        self, channel: discord.abc.Messageable, turn: PendingTurn
+    ) -> None:
+        """同一頻道依序規劃並送出回覆，其他頻道可獨立處理。"""
+        channel_id = turn.messages[0].channel_id
+        lock = self._turn_locks.setdefault(channel_id, asyncio.Lock())
+        try:
+            async with lock:
+                messages = await self._turns.collect(turn)
+                result = await self._pipeline.handle_turn(messages, turn.revision)
+                if result.replies or result.gif is not None:
+                    await self._send_replies(channel, messages[-1], result)
+        except Exception:  # noqa: BLE001 — 單一回合失敗不影響後續回合。
+            logger.exception("處理頻道 %s 的對話回合時發生錯誤", channel_id)
 
     async def on_raw_reaction_add(
         self, payload: discord.RawReactionActionEvent
@@ -188,13 +294,21 @@ class SyrupBot(discord.Client):
 
     def _to_incoming(self, message: discord.Message) -> IncomingMessage:
         """把 discord.Message 抽成框架無關的 IncomingMessage。"""
+        is_reply_to_bot = self._is_reply_to_bot(message)
         return IncomingMessage(
             channel_id=message.channel.id,
             author=message.author.display_name,
+            author_id=message.author.id,
             content=self._clean_content(message),
             author_is_bot=message.author.bot,
             mentions_bot=self.user in message.mentions,
-            is_reply_to_bot=self._is_reply_to_bot(message),
+            is_reply_to_bot=is_reply_to_bot,
+            addresses_others=(
+                (message.type is discord.MessageType.reply and not is_reply_to_bot)
+                or any(user != self.user for user in message.mentions)
+                or bool(message.role_mentions)
+                or message.mention_everyone
+            ),
         )
 
     def _clean_content(self, message: discord.Message) -> str:
@@ -214,14 +328,36 @@ class SyrupBot(discord.Client):
             return resolved.author == self.user
         return False
 
-    async def _send_like_human(
-        self, channel: discord.abc.Messageable, text: str
+    async def _send_replies(
+        self, channel: discord.abc.Messageable, msg: IncomingMessage, result: PipelineResult
     ) -> None:
-        """加一點打字延遲再送出,讓回覆不要像機器人秒回。"""
-        delay = min(
-            max(len(text) * _TYPING_SECONDS_PER_CHAR, _TYPING_MIN_SECONDS),
-            _TYPING_MAX_SECONDS,
-        )
-        async with channel.typing():
-            await asyncio.sleep(delay)
-        await channel.send(text)
+        """保留打字停頓，並在每一段送出前確認記憶仍有效。"""
+        if not self._pipeline.is_current_reply(msg.channel_id, result):
+            return
+        if result.replies:
+            delay = min(
+                max(len(result.replies[0]) * _TYPING_SECONDS_PER_CHAR, _TYPING_MIN_SECONDS),
+                _TYPING_MAX_SECONDS,
+            )
+            async with channel.typing():
+                await asyncio.sleep(delay)
+        sent: list[str] = []
+        gif_sent = False
+        try:
+            for chunk in result.replies:
+                if sent:
+                    await asyncio.sleep(_NEXT_CHUNK_DELAY)
+                if not self._pipeline.is_current_reply(msg.channel_id, result):
+                    return
+                await channel.send(chunk)
+                sent.append(chunk)
+
+            if result.gif is not None:
+                if sent:
+                    await asyncio.sleep(_NEXT_CHUNK_DELAY)
+                if not self._pipeline.is_current_reply(msg.channel_id, result):
+                    return
+                await channel.send(result.gif.url)
+                gif_sent = True
+        finally:
+            self._pipeline.record_delivered_reply(msg, result, sent, gif_sent=gif_sent)

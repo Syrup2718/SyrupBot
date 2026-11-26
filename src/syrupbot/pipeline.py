@@ -7,14 +7,16 @@
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
 from .context import ConversationStore
 from .decision import DecisionEngine, IncomingMessage
-from .llm import LLMClient
+from .gifs import GifPicker, GifSelection
+from .llm import CompletionStats, LLMClient
 from .persona import Persona
-from .postprocess import humanize, split_message
+from .postprocess import humanize, is_chat_replay, split_chat_reply
 from .reaction import ReactionEngine
+from .turns import combine_turn
 
 logger = logging.getLogger(__name__)
 
@@ -25,10 +27,24 @@ class PipelineResult:
 
     replies: list[str] = field(default_factory=list)
     reaction: str | None = None
+    context_revision: int = 0
+    gif: GifSelection | None = None
+
+
+@dataclass(frozen=True)
+class LLMStatus:
+    """提供狀態畫面所需的模型與上下文摘要。"""
+
+    model: str
+    decision_model: str
+    context_count: int
+    context_limit: int
+    in_flight: int
+    last_completion: CompletionStats | None
 
 
 class ChatPipeline:
-    """處理單則訊息,回傳要送回 Discord 的內容(可能多則、或不回、或只貼表情)。"""
+    """接收回合、規劃回覆，以及記錄實際送出的文字。"""
 
     def __init__(
         self,
@@ -37,26 +53,56 @@ class ChatPipeline:
         decision: DecisionEngine,
         llm: LLMClient,
         reaction: ReactionEngine,
+        gifs: GifPicker | None = None,
     ) -> None:
         self._persona = persona
         self._context = context
         self._decision = decision
         self._llm = llm
         self._reaction = reaction
+        self._gifs = gifs
 
     async def handle(self, msg: IncomingMessage) -> PipelineResult:
-        """處理一則訊息;回傳要傳送的訊息段與要貼的表情。"""
-        # 先把非 bot 的訊息記進上下文(不論最後回不回,都要維持對話脈絡)。
-        if not msg.author_is_bot:
-            self._context.add(msg.channel_id, msg.author, msg.content, is_self=False)
+        """在沒有回合收集器時，規劃單則訊息的表情與回覆。"""
+        reaction = self.reaction_for(msg)
+        result = await self.handle_turn((msg,), self.context_revision(msg.channel_id))
+        return replace(result, reaction=reaction)
 
-        # 「要不要貼表情」與「要不要回話」彼此獨立:可能只貼表情不回話。
-        reaction = self._reaction.decide_self_reaction(msg)
+    def context_revision(self, channel_id: int) -> int:
+        return self._context.revision(channel_id)
+
+    def can_merge(self, msg: IncomingMessage) -> bool:
+        return not msg.addresses_others and self._decision.skip_reason(msg) is None
+
+    def reaction_for(self, msg: IncomingMessage) -> str | None:
+        return self._reaction.decide_self_reaction(msg)
+
+    async def handle_turn(
+        self, messages: tuple[IncomingMessage, ...], revision: int
+    ) -> PipelineResult:
+        """依順序記錄入站訊息，再對整個回合判斷一次。"""
+        msg = combine_turn(messages)
+        channel_id = msg.channel_id
+        if self.context_revision(channel_id) != revision:
+            return PipelineResult()
+        for item in messages:
+            if not item.author_is_bot:
+                self._context.add(channel_id, item.author, item.content, is_self=False)
+
+        auto_gif = None
+        if self._gifs is not None and self._decision.skip_reason(msg) is None:
+            gif = self._gifs.for_request(msg)
+            if gif is not None:
+                return PipelineResult(gif=gif, context_revision=revision)
+            auto_gif = self._gifs.for_reply(msg)
+        gif_only = PipelineResult(gif=auto_gif, context_revision=revision)
 
         decision = await self._decision.decide(msg)
         logger.debug("頻道 %s 決策:%s", msg.channel_id, decision.reason)
+        if self._context.revision(msg.channel_id) != revision:
+            return PipelineResult()
         if not decision.should_reply:
-            return PipelineResult(reaction=reaction)
+            return gif_only
 
         # llm 策略可能已經把回覆生出來了;heuristic 策略則在這裡才生成。
         if decision.reply is not None:
@@ -64,17 +110,78 @@ class ChatPipeline:
         else:
             transcript = self._context.transcript(msg.channel_id, self._persona.name)
             raw_reply = await self._llm.generate_reply(
-                self._persona.system_prompt, transcript
+                self._persona.system_prompt, transcript, channel_id=msg.channel_id,
+                latest_message=(msg.author, msg.content),
             )
 
-        reply = humanize(raw_reply)
-        if not reply:
-            return PipelineResult(reaction=reaction)
+        if self._context.revision(msg.channel_id) != revision:
+            return PipelineResult()
 
-        # 記下自己的發言,並更新冷卻。
-        self._context.add(msg.channel_id, self._persona.name, reply, is_self=True)
-        self._decision.record_reply(msg.channel_id)
-        return PipelineResult(replies=split_message(reply), reaction=reaction)
+        reply = humanize(raw_reply)
+        if self._is_replay(msg, reply):
+            logger.debug("頻道 %s 回覆重貼對話，改用當前訊息重試", msg.channel_id)
+            raw_reply = await self._llm.generate_reply(
+                self._persona.system_prompt,
+                "",
+                channel_id=msg.channel_id,
+                latest_message=(msg.author, msg.content),
+            )
+            reply = humanize(raw_reply)
+            if self._context.revision(msg.channel_id) != revision:
+                return PipelineResult()
+            if self._is_replay(msg, reply):
+                return gif_only
+        if not reply:
+            return gif_only
+
+        return replace(gif_only, replies=split_chat_reply(reply))
+
+    def clear_context(self, channel_id: int) -> int:
+        """清空本頻道的短期記憶與連續對話。"""
+        self._decision.clear_follow_up(channel_id)
+        return self._context.clear(channel_id)
+
+    def is_current_reply(self, channel_id: int, result: PipelineResult) -> bool:
+        return self._context.revision(channel_id) == result.context_revision
+
+    def _is_replay(self, msg: IncomingMessage, reply: str) -> bool:
+        history = self._context.messages(msg.channel_id)
+        return is_chat_replay(
+            reply,
+            speakers={self._persona.name, msg.author, *(item.author for item in history)},
+            previous_replies=(item.content for item in history if item.is_self),
+        )
+
+    def record_delivered_reply(
+        self, msg: IncomingMessage, result: PipelineResult, sent: list[str],
+        *, gif_sent: bool = False,
+    ) -> None:
+        """送出成功才記錄文字，網路失敗時只保存已確認送出的段落。"""
+        if not self.is_current_reply(msg.channel_id, result):
+            return
+        parts = sent
+        if gif_sent and result.gif is not None:
+            if self._gifs is not None:
+                self._gifs.record_sent(msg.channel_id)
+            parts = [*sent, f"[傳了{result.gif.label} GIF]"]
+        if not parts:
+            return
+        self._context.add(msg.channel_id, self._persona.name, "\n".join(parts), is_self=True)
+        if sent:
+            self._decision.record_reply(msg.channel_id)
+        self._decision.record_delivered_reply(msg)
+
+    def llm_status(self, channel_id: int) -> LLMStatus:
+        """取得目前的頻道上下文和最近一次模型請求。"""
+        count, limit = self._context.usage(channel_id)
+        return LLMStatus(
+            model=self._llm.model,
+            decision_model=self._llm.decision_model,
+            context_count=count,
+            context_limit=limit,
+            in_flight=self._llm.in_flight,
+            last_completion=self._llm.last_stats(channel_id),
+        )
 
     def should_follow_reaction(self, channel_id: int) -> bool:
         """別人按了表情時,是否(機率上)要跟著按。"""

@@ -1,4 +1,10 @@
-from syrupbot.postprocess import DISCORD_MAX_LEN, humanize, split_message
+from syrupbot.postprocess import (
+    DISCORD_MAX_LEN,
+    humanize,
+    is_chat_replay,
+    split_chat_reply,
+    split_message,
+)
 
 
 def test_humanize_keeps_natural_reply() -> None:
@@ -33,6 +39,23 @@ def test_humanize_keeps_inner_quotes() -> None:
     assert humanize(text) == text
 
 
+def test_humanize_drops_action_asides() -> None:
+    assert humanize("早安嘛～（頂呆毛）") == "早安嘛～"
+    assert humanize("*歪頭*我在喔(眨眼)") == "我在喔"
+    assert humanize("（摸摸星星髮夾）") == ""
+
+
+def test_humanize_keeps_regular_asides_and_emphasis() -> None:
+    text = "我月底才有空（週末除外），這首歌真的*很好聽*"
+    assert humanize(text) == text
+
+
+def test_chat_replay_matches_speaker_labels_but_preserves_live_chat() -> None:
+    assert is_chat_replay("咦\n**漿糖**：我在啦", speakers={"漿糖"}, previous_replies=[])
+    assert not is_chat_replay("好啊", speakers={"漿糖"}, previous_replies=["好啊"])
+    assert not is_chat_replay("網址：https://example.org", speakers={"漿糖"}, previous_replies=[])
+
+
 def test_split_short_message_unchanged() -> None:
     assert split_message("你好") == ["你好"]
 
@@ -54,3 +77,22 @@ def test_split_prefers_newline_boundary() -> None:
     chunks = split_message(f"{first}\n{second}", limit=2000)
     assert chunks[0] == first
     assert chunks[1] == second
+
+
+def test_chat_reply_keeps_short_messages_together() -> None:
+    text = "好啊！你要玩什麼？"
+    assert split_chat_reply(text) == [text]
+
+
+def test_chat_reply_splits_at_sentence_or_newline() -> None:
+    first = "我剛剛才想到我們上次玩的那關其實有一條很容易錯過的路。"
+    second = "下次可以先往右邊繞過去，看到橋之後再回頭找其他人。"
+    assert split_chat_reply(first + second) == [first, second]
+    assert split_chat_reply(f"{first[:-1]}\n{second}") == [first[:-1], second]
+
+
+def test_chat_reply_preserves_links_and_discord_limit() -> None:
+    text = "這個我昨天找了好久，後來才發現你貼的那篇文章就有說明。"
+    text += "你可以先從這篇看看：https://example.org/?q=game"
+    assert split_chat_reply(text) == [text]
+    assert all(len(chunk) <= DISCORD_MAX_LEN for chunk in split_chat_reply("啊" * 2500))

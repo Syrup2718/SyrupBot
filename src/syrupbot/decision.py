@@ -5,7 +5,7 @@
   第二關(策略):
     - heuristic:用機率+加權規則判斷,不花 API token。
     - llm:讓模型讀上下文自己決定要不要插話(一次呼叫同時產生回覆)。
-  捷徑:被 @ 提及或被 reply,直接回(略過第二關)。
+  捷徑:被 @ 提及、被 reply，或收到明確的連續追問時直接回。
 
 策略由 config.decision_strategy 切換,介面不變,方便之後升級。
 """
@@ -13,6 +13,7 @@
 from __future__ import annotations
 
 import logging
+import re
 import time
 from dataclasses import dataclass
 from random import Random
@@ -28,6 +29,11 @@ logger = logging.getLogger(__name__)
 
 # 視為「給別的 bot 的指令」而略過的訊息前綴。
 _COMMAND_PREFIXES = ("/", "!", "?", ".", "$", "%", ">", "~")
+_FOLLOW_UP_SECONDS = 60
+_DIRECT_ADDRESS = re.compile(
+    r"^(?:(?:那|所以|然後|不過|可是|對了|欸|請問|我想問(?:一下)?)[，,、\s]*)*"
+    r"[你妳](?!們)"
+)
 
 
 @dataclass(frozen=True)
@@ -43,6 +49,8 @@ class IncomingMessage:
     author_is_bot: bool
     mentions_bot: bool
     is_reply_to_bot: bool
+    author_id: int | None = None
+    addresses_others: bool = False
 
 
 @dataclass(frozen=True)
@@ -79,20 +87,20 @@ class DecisionEngine:
         self._clock = clock or time.monotonic
         self._last_reply: dict[int, float] = {}
         self._last_decision: dict[int, float] = {}
+        self._follow_up_targets: dict[int, tuple[int, float]] = {}
 
     async def decide(self, msg: IncomingMessage) -> ReplyDecision:
         """判斷這則訊息要不要回。"""
-        # ── 第一關:免費的硬規則前置過濾 ──
-        if msg.author_is_bot:
-            return ReplyDecision(False, "發話者是 bot")
-        if not self._channel_allowed(msg.channel_id):
-            return ReplyDecision(False, "頻道不在白名單")
-        if self._looks_like_command(msg.content):
-            return ReplyDecision(False, "看起來是給別的 bot 的指令")
+        if reason := self.skip_reason(msg):
+            return ReplyDecision(False, reason)
 
         # ── 捷徑:直接被叫到就回(不受一般冷卻限制) ──
         if msg.mentions_bot or msg.is_reply_to_bot:
+            self._follow_up_targets.pop(msg.channel_id, None)
             return ReplyDecision(True, "被直接 @ 或 reply")
+
+        if self._take_follow_up(msg):
+            return ReplyDecision(True, "同一位成員正在接續對話")
 
         # 一般訊息要受回覆冷卻限制,避免洗版。
         if self._in_cooldown(msg.channel_id):
@@ -104,8 +112,35 @@ class DecisionEngine:
         return self._decide_heuristic(msg)
 
     def record_reply(self, channel_id: int) -> None:
-        """實際送出回覆後呼叫,更新冷卻計時。"""
+        """回覆產生後更新一般插話的冷卻計時。"""
         self._last_reply[channel_id] = self._clock()
+
+    def record_delivered_reply(self, msg: IncomingMessage) -> None:
+        """Discord 送出回覆後，開始等待原發話者接話。"""
+        if msg.author_id is not None:
+            self._follow_up_targets[msg.channel_id] = (msg.author_id, self._clock())
+
+    def clear_follow_up(self, channel_id: int) -> None:
+        """結束某頻道的連續對話，保留防洗版的冷卻。"""
+        self._follow_up_targets.pop(channel_id, None)
+
+    def _take_follow_up(self, msg: IncomingMessage) -> bool:
+        target = self._follow_up_targets.get(msg.channel_id)
+        if target is None:
+            return False
+        author_id, sent_at = target
+        if (
+            msg.author_id != author_id
+            or msg.addresses_others
+            or self._clock() - sent_at >= _FOLLOW_UP_SECONDS
+        ):
+            self._follow_up_targets.pop(msg.channel_id, None)
+            return False
+        if not _DIRECT_ADDRESS.match(msg.content.lstrip()):
+            return False
+        # 先消耗資格，避免同一串快速連發觸發多個並行回覆。
+        self._follow_up_targets.pop(msg.channel_id, None)
+        return True
 
     # ── 內部:策略 ──
 
@@ -139,7 +174,8 @@ class DecisionEngine:
 
         transcript = self._context.transcript(msg.channel_id, self._persona.name)
         should_reply, reply = await self._llm.judge_and_reply(
-            self._persona.system_prompt, transcript
+            self._persona.system_prompt, transcript, channel_id=msg.channel_id,
+            latest_message=(msg.author, msg.content),
         )
         if should_reply:
             return ReplyDecision(True, "LLM 判斷想插話", reply=reply)
@@ -147,8 +183,15 @@ class DecisionEngine:
 
     # ── 內部:前置過濾輔助 ──
 
-    def _channel_allowed(self, channel_id: int) -> bool:
-        return self._policy.is_allowed(channel_id)
+    def skip_reason(self, msg: IncomingMessage) -> str | None:
+        """提供回合收集與決策共用的硬規則。"""
+        if msg.author_is_bot:
+            return "發話者是 bot"
+        if not self._policy.is_allowed(msg.channel_id):
+            return "頻道不在白名單"
+        if self._looks_like_command(msg.content):
+            return "看起來是給別的 bot 的指令"
+        return None
 
     @staticmethod
     def _looks_like_command(content: str) -> bool:

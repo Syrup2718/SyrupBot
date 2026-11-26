@@ -35,11 +35,14 @@ python3 -m venv .venv
 
 ```bash
 cp .env.example .env
-nano .env        # 填入 DISCORD_TOKEN 與 DEEPSEEK_API_KEY
+nano .env        # 填入 DISCORD_TOKEN；使用 DeepSeek 時也填 DEEPSEEK_API_KEY
 ```
 
-> ⚠️ 同一個 bot token 一次只能有一個程式在連。啟動這台之前，
-> 先把你本機（或其他地方）還在跑的漿糖關掉，否則兩邊會互踢、連不上。
+若要在 Debian 上使用同機的 llama.cpp，可複製 `llm.local.env.example` 為 `llm.local.env`，
+並將 `LLAMA_SERVER_EXE` 改成 Debian 主機上可執行的 `llama-server` 路徑。手動管理
+`llama-server` 時可把 `LLAMA_SERVER_EXE` 留空，並填上對應的 API 位址與模型 ID。
+
+從其他機器移轉時，先停止原本使用同一 bot token 的程序，避免兩邊同時處理訊息。
 
 先手動跑一次確認沒問題（看到「已登入：漿糖…」就對了，然後 Ctrl+C 停掉）：
 
@@ -71,5 +74,5 @@ sudo systemctl restart syrupbot      # 改了 .env 或人設後重啟套用
 sudo systemctl stop syrupbot         # 停止
 ```
 
-> 改了 `personas/*.toml` 或 `.env` 後，要 `systemctl restart syrupbot` 才會生效。
+> 改了 `personas/*.toml`、`.env` 或 `llm.local.env` 後，要 `systemctl restart syrupbot` 才會生效。
 > 更新程式：`git pull` 後一樣 `restart`。

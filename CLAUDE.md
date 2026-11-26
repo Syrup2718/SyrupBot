@@ -2,14 +2,15 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+共用的架構、開發指令與行為契約見 [AGENTS.md](AGENTS.md)。
+
 ## 專案概觀
 
 SyrupBot 是一個「**住在 Discord 群組裡的 LLM 角色**」,不是指令型工具 bot。
 設計理念參考 MaiBot 的方向:**更像真人互動,而不是更像完美助手**——它會讀群組
 對話、自己判斷該不該插話、用簡短自然的語氣回覆,而不是被 `/ask` 或 tag 才回答。
 
-技術棧:**Python + discord.py + DeepSeek API**(DeepSeek 與 OpenAI SDK 相容,
-透過 `openai` 套件、把 base_url 指向 DeepSeek)。
+技術棧為 **Python、discord.py 和 OpenAI 相容 API**，支援 DeepSeek 與本機 llama.cpp。
 
 人設目標:可愛但不浮誇的少女感,偶爾用「餒/窩/對不擠/啦/齁」等語助詞但不浮濫。
 
@@ -35,12 +36,8 @@ python -m pytest tests/test_decision.py::test_always_replies_when_mentioned
 ruff check .
 ```
 
-> 註:此開發機處於自簽憑證/代理環境,`pip install` 可能 SSL 憑證驗證失敗。
-> 若遇到,加上:`--trusted-host pypi.org --trusted-host files.pythonhosted.org`。
-
-執行前需 `cp .env.example .env` 並填入 `DISCORD_TOKEN`、`DEEPSEEK_API_KEY`,
-且在 Discord Developer Portal 開啟 **Message Content Intent**(否則讀不到訊息內容)。
-設定缺漏時 `Config.from_env()` 會在啟動時直接拋錯。
+Discord 與兩種模型來源的設定步驟見 [README.md](README.md)。設定缺漏時
+`Config.from_env()` 會在啟動時直接拋錯。
 
 ## 架構
 
@@ -73,21 +70,23 @@ discord 事件
 - **`decision.py` ★核心** — 「是否回覆」決策,SyrupBot 與傳統 bot 的本質差異。
   - **第一關(免費硬規則)**:略過 bot/自己、不在白名單的頻道、別人的指令前綴、
     冷卻時間內的訊息。
-  - **捷徑**:被 @ 提及或被 reply → 直接回(不受一般冷卻限制)。
+  - **捷徑**:被 @ 提及、被 reply，或原發話者在 60 秒內用明確的第二人稱接話時直接回。
   - **第二關(策略,由 `DECISION_STRATEGY` 切換)**:
     - `heuristic`:機率+加權規則(問號、提到名字、興趣關鍵字、最近是否在對話、
       訊息長短),**不花 API token**。
     - `llm`:呼叫 `judge_and_reply`,讓模型讀上下文自己決定,**一次呼叫同時產生
       回覆**;以 `DECISION_COOLDOWN_SECONDS` 限制每頻道判斷頻率來控成本。
-  - 冷卻狀態存在引擎內;pipeline 送出回覆後呼叫 `record_reply()` 更新。
+  - Discord 成功送出後，pipeline 才記錄已送達的文字、更新一般冷卻，並開始等待原發話者接話。
 
 - **`persona.py`** — 從 `personas/<PERSONA>.toml` 載入角色,組出 system prompt
   (身分+個性+說話守則+語助詞「適量」指示+few-shot 範例+禁則)。few-shot 是讓
   它「像那個角色」最有效的手段。
 
-- **`llm.py`** — LLM 供應商隔離層。唯一知道 `openai`/DeepSeek 細節的地方。
+- **`llm.py`** — LLM 供應商隔離層，集中處理 OpenAI 相容 API 的請求。
   `generate_reply`(heuristic 路徑:已決定要回,只生成);`judge_and_reply`
   (llm 路徑:回傳 JSON 的判斷+回覆,解析失敗時保守地當作不回)。
+
+- **`local_model.py`** — 選用的 llama.cpp 啟動與健康檢查，由入口點管理程序生命週期。
 
 - **`context.py`** — 每頻道近期上下文(`ConversationStore`),記憶體、重啟即清空,
   含發話者名;`transcript()` 組成給 LLM 的逐字稿。這是**短期上下文**,不是長期記憶。

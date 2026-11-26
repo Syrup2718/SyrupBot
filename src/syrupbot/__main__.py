@@ -10,6 +10,8 @@ from .channels import ChannelPolicy
 from .config import Config
 from .context import ConversationStore
 from .decision import DecisionEngine
+from .gifs import GifPicker
+from .local_model import local_model
 from .llm import LLMClient
 from .persona import Persona
 from .pipeline import ChatPipeline
@@ -34,10 +36,12 @@ def main() -> None:
     )
     decision = DecisionEngine(config, persona, llm, context, policy=policy)
     reaction = ReactionEngine(config, persona, policy=policy)
-    pipeline = ChatPipeline(persona, context, decision, llm, reaction)
+    gifs = GifPicker(config, persona)
+    pipeline = ChatPipeline(persona, context, decision, llm, reaction, gifs)
 
-    bot = SyrupBot(pipeline, policy)
-    bot.run(config.discord_token, log_handler=None)
+    bot = SyrupBot(pipeline, policy, turn_window_seconds=config.turn_window_seconds)
+    with local_model(config):
+        bot.run(config.discord_token, log_handler=None)
 
 
 if __name__ == "__main__":

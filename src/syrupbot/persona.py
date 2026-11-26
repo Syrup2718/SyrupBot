@@ -9,9 +9,43 @@ from __future__ import annotations
 import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
+from urllib.parse import urlsplit
 
 # personas/ 目錄位於專案根目錄(本檔在 src/syrupbot/persona.py)。
 _PERSONA_DIR = Path(__file__).resolve().parents[2] / "personas"
+
+
+@dataclass(frozen=True)
+class GifSticker:
+    """單張 GIF 與適用情境。"""
+
+    label: str
+    keywords: tuple[str, ...]
+    url: str
+
+
+@dataclass(frozen=True)
+class GifTheme:
+    """一個可依名稱指定的 GIF 系列。"""
+
+    label: str
+    keywords: tuple[str, ...]
+    stickers: tuple[GifSticker, ...]
+
+
+def _is_gif_url(url: str) -> bool:
+    if any(char.isspace() for char in url):
+        return False
+    try:
+        parsed = urlsplit(url)
+    except ValueError:
+        return False
+    return (
+        parsed.scheme == "https"
+        and bool(parsed.hostname)
+        and parsed.username is None
+        and parsed.path.lower().endswith(".gif")
+    )
 
 
 @dataclass(frozen=True)
@@ -31,6 +65,7 @@ class Persona:
     reaction_keywords: tuple[tuple[str, str], ...] = ()
     reaction_emojis: tuple[str, ...] = ()
     _system_prompt: str = field(default="", compare=False)
+    gif_themes: tuple[GifTheme, ...] = ()
 
     @classmethod
     def load(cls, name: str) -> "Persona":
@@ -48,10 +83,29 @@ class Persona:
         reactions = data.get("reactions", {})
         reaction_keywords = tuple(reactions.get("keywords", {}).items())
         reaction_emojis = tuple(reactions.get("emojis", []))
+        gif_themes = []
+        for label, theme in data.get("gifs", {}).items():
+            keywords = tuple(theme.get("keywords", []))
+            if "stickers" in theme:
+                stickers = tuple(
+                    GifSticker(item["label"], tuple(item.get("keywords", [])), item["url"])
+                    for item in theme["stickers"]
+                )
+            else:
+                # 舊人設仍可使用分類共用的 urls 與 keywords。
+                stickers = tuple(
+                    GifSticker(label, keywords, url) for url in theme.get("urls", [])
+                )
+            if not stickers or not all(
+                isinstance(sticker.url, str) and _is_gif_url(sticker.url)
+                for sticker in stickers
+            ):
+                raise ValueError(f"角色 GIF 分類 {label!r} 必須提供 HTTPS .gif 網址")
+            gif_themes.append(GifTheme(label, keywords, stickers))
         return cls(
             name=data["name"],
             aliases=tuple(data.get("aliases", [])),
-            identity=data.get("identity", ""),
+            identity=data.get("identity", "").strip(),
             traits=tuple(data.get("traits", [])),
             speaking_style=data.get("speaking_style", "").strip(),
             particles=tuple(data.get("particles", [])),
@@ -60,6 +114,7 @@ class Persona:
             forbidden=tuple(data.get("forbidden", [])),
             reaction_keywords=reaction_keywords,
             reaction_emojis=reaction_emojis,
+            gif_themes=tuple(gif_themes),
         )
 
     @property
