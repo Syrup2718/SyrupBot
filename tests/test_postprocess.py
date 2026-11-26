@@ -102,8 +102,8 @@ def test_link_mentions_prefers_longest_name_and_keeps_unknown():
     from syrupbot.postprocess import link_mentions
 
     members = {"小明": 1, "小明明": 2}
-    assert link_mentions("@小明明 你呢 ＠小明 也來", members) == "<@2> 你呢 <@1> 也來"
-    assert link_mentions("@路人 你好", members) == "@路人 你好"
+    assert link_mentions("@小明明 你呢 ＠小明 也來", members) == "<@2> 你呢 小明 也來"  # 一則最多一個 tag
+    assert link_mentions("@路人 你好", members) == "路人 你好"
     assert link_mentions("寄信到 a@b.com", members) == "寄信到 a@b.com"
 
 
@@ -115,3 +115,13 @@ def test_unlink_mentions_round_trip():
     assert linked == "<@123456789012345678> 快來"
     assert unlink_mentions(linked, members) == "@小明 快來"
     assert unlink_mentions("<@!123456789012345678> 嗨 <@9>", members) == "@小明 嗨 <@9>"
+
+
+def test_link_mentions_tolerates_spaces_and_skips_addressee():
+    from syrupbot.postprocess import link_mentions
+
+    members = {"酒鬼001": 1, "酒鬼004": 4}
+    assert link_mentions("@酒鬼 001 你敢嗎", members) == "<@1> 你敢嗎"
+    assert link_mentions("@酒鬼 004 你那不是有圖證嗎", members, skip_id=4) == "你那不是有圖證嗎"
+    assert link_mentions("去問 @酒鬼004 啦", members, skip_id=4) == "去問 酒鬼004 啦"
+    assert link_mentions("@酒鬼001 @酒鬼004 都來", members) == "<@1> 酒鬼004 都來"

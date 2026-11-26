@@ -7,6 +7,7 @@ Prompt 會「漏」,所以這裡用程式做最後把關:砍掉客服腔的開�
 from __future__ import annotations
 
 import re
+import unicodedata
 from collections.abc import Iterable
 from difflib import SequenceMatcher
 
@@ -160,18 +161,86 @@ def _strip_wrapping_quotes(text: str) -> str:
     return text
 
 
-def link_mentions(text: str, members: dict[str, int]) -> str:
+# 「@」前面不是英數字或點才算 tag,避免把 email 之類的 a@b.com 當成 tag。
+_MENTION_AT = re.compile(r"(?<![A-Za-z0-9.])[@＠]")
+# 拿掉行首 tag 後,順手清掉緊接的空白與逗號。
+_LEADING_GAP = re.compile(r"^[\s,，、:：]+")
+
+
+def _fold(text: str) -> str:
+    """比對名字用:全形轉半形、不分大小寫、忽略空白。"""
+    return "".join(unicodedata.normalize("NFKC", text).casefold().split())
+
+
+def _match_name(text: str, start: int, folded_name: str) -> int | None:
+    """從 start 開始比對名字,允許中間夾空白(模型常寫成「酒鬼 001」)。
+
+    對上時回傳名字結束的位置,對不上回傳 None。
+    """
+    i, j = start, 0
+    while j < len(folded_name):
+        if i >= len(text):
+            return None
+        if text[i].isspace():
+            if j == 0 and i - start > 1:
+                return None  # 「@」後面空太多格,不像在 tag
+            i += 1
+            continue
+        piece = _fold(text[i])
+        if not folded_name.startswith(piece, j) or not piece:
+            return None
+        j += len(piece)
+        i += 1
+    return i
+
+
+def link_mentions(
+    text: str, members: dict[str, int], *, skip_id: int | None = None,
+    max_tags: int = 1,
+) -> str:
     """把模型寫的「@名字」換成真正的 Discord tag(<@ID>)。
 
-    只換 members 裡的人(最近在頻道講過話的),名字長的先換,避免「小明」
-    吃掉「小明明」。全形＠也接受。對不到的 @ 原樣保留。
+    - 只換 members 裡的人(最近在頻道講過話的);名字比對忽略空白、全半形與大小寫,
+      名字長的優先,避免「小明」吃掉「小明明」。
+    - skip_id 是她正在回的人:對方本來就知道在跟他說話,不必再 tag。
+      寫在行首就整個拿掉,寫在句中改成純文字名字。
+    - 一則最多 max_tags 個真的 tag,超過的改成純文字名字,避免一次吵很多人。
+    - 對不到任何人的「@」直接拿掉,不留下看起來壞掉的 tag。
     """
-    for name in sorted(members, key=len, reverse=True):
-        if not name:
+    names = sorted(
+        ((name, _fold(name), user_id) for name, user_id in members.items() if _fold(name)),
+        key=lambda item: len(item[1]), reverse=True,
+    )
+    out: list[str] = []
+    pos = 0
+    tags = 0
+    for match in _MENTION_AT.finditer(text):
+        if match.start() < pos:
             continue
-        pattern = re.compile(r"[@＠]" + re.escape(name))
-        text = pattern.sub(f"<@{members[name]}>", text)
-    return text
+        out.append(text[pos:match.start()])
+        after = match.end()
+        found = None
+        for name, folded, user_id in names:
+            end = _match_name(text, after, folded)
+            if end is not None:
+                found = (name, user_id, end)
+                break
+        if found is None:
+            pos = after  # 對不到人:只拿掉「@」
+            continue
+        name, user_id, end = found
+        pos = end
+        at_line_start = not "".join(out).rsplit("\n", 1)[-1].strip()
+        if user_id != skip_id and tags < max_tags:
+            out.append(f"<@{user_id}>")
+            tags += 1
+        elif at_line_start:
+            rest = _LEADING_GAP.sub("", text[pos:])
+            pos = len(text) - len(rest)
+        else:
+            out.append(name)
+    out.append(text[pos:])
+    return "".join(out).strip()
 
 
 def unlink_mentions(text: str, members: dict[str, int]) -> str:
