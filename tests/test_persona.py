@@ -40,16 +40,16 @@ def test_matches_interest() -> None:
     assert persona.matches_interest("來討論季度財報") is False
 
 
-def test_mai_persona_loads_with_alt_styles() -> None:
-    persona = Persona.load("mai")
-    assert persona.name == "麥麥"
-    assert persona.mentioned_by_name("麦麦在嗎")
+def test_kokuto_persona_loads_with_alt_styles() -> None:
+    persona = Persona.load("kokuto")
+    assert persona.name == "黑糖"
+    assert persona.mentioned_by_name("黑糖糖在嗎")
     assert persona.alt_styles
     assert 0 < persona.alt_style_probability < 1
 
 
 def test_prompt_for_turn_adds_alt_style_only_when_rolled() -> None:
-    persona = Persona.load("mai")
+    persona = Persona.load("kokuto")
     assert persona.prompt_for_turn(lambda: 0.99) == persona.system_prompt
     styled = persona.prompt_for_turn(lambda: 0.0)
     assert styled.startswith(persona.system_prompt)
