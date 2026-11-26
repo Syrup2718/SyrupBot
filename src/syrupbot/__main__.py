@@ -42,7 +42,10 @@ def main() -> None:
         persona, context, decision, llm, reaction, gifs, lull=LullWatcher(config)
     )
 
-    bot = SyrupBot(pipeline, policy, turn_window_seconds=config.turn_window_seconds)
+    bot = SyrupBot(
+        pipeline, policy, turn_window_seconds=config.turn_window_seconds,
+        nickname=persona.name if config.sync_nickname else None,
+    )
     with local_model(config):
         bot.run(config.discord_token, log_handler=None)
 

@@ -150,6 +150,7 @@ llama.cpp 回傳速度時，會顯示輸入處理與生成的 tok/s。其他 API
 | `REPLY_PROBABILITY` | `0.08` | heuristic 下,一般訊息的基礎插話機率(調高=更愛講話) |
 | `LOOK_PROBABILITY` | `0.3` | hybrid 下,一般訊息交給模型判斷的基礎機率 |
 | `TALK_FATIGUE_HALF_LIFE_SECONDS` | `300` | 話量疲勞的半衰期;講越多越安靜,0 關閉 |
+| `SYNC_NICKNAME` | `true` | 啟動時把 bot 在每個伺服器的暱稱改成角色名(需「變更暱稱」權限) |
 | `LULL_PROBABILITY` | `0.1` | 聊一陣子後冷場時,給她一次開口機會的機率;0 關閉 |
 | `LULL_MIN_SECONDS` / `LULL_MAX_SECONDS` | `120` / `1800` | 安靜多久算冷場的上下限(實際依聊天節奏推算) |
 | `TURN_WINDOW_SECONDS` | `0.8` | 收集同一成員連發的時間，`0` 可關閉合併 |

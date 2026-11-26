@@ -264,3 +264,32 @@ def test_observe_skips_disallowed_channel(setup_pipeline):
     before = len(context.messages(1))
     pipeline.observe(replace(_INCOMING, author_is_bot=True))
     assert len(context.messages(1)) == before
+
+
+def test_nickname_change_rules():
+    from syrupbot.bot import nickname_change
+
+    assert nickname_change(None, "SyrupBot", "黑糖") == (True, "黑糖")
+    assert nickname_change("黑糖", "SyrupBot", "黑糖") == (False, "黑糖")
+    assert nickname_change("漿糖", "SyrupBot", "黑糖") == (True, "黑糖")
+    assert nickname_change("漿糖", "漿糖", "漿糖") == (True, None)  # 同帳號名就清掉暱稱
+    assert nickname_change(None, "漿糖", "漿糖") == (False, None)
+    assert nickname_change("隨便", "SyrupBot", None) == (False, None)  # 關閉時不動
+    assert nickname_change(None, "x", "糖" * 40)[1] == "糖" * 32
+
+
+async def test_sync_nickname_edits_and_survives_missing_permission(setup_pipeline):
+    import discord
+
+    pipeline, *_ = setup_pipeline
+    bot = SyrupBot(pipeline, ChannelPolicy(), nickname="黑糖")
+    bot._connection.user = SimpleNamespace(id=42, name="SyrupBot")
+    me = SimpleNamespace(nick=None, edit=AsyncMock())
+    await bot._sync_nickname(SimpleNamespace(me=me, name="測試群"))
+    me.edit.assert_awaited_once_with(nick="黑糖")
+
+    denied = SimpleNamespace(
+        nick=None,
+        edit=AsyncMock(side_effect=discord.Forbidden(Mock(status=403, reason="x"), "no")),
+    )
+    await bot._sync_nickname(SimpleNamespace(me=denied, name="沒權限群"))  # 不應拋錯

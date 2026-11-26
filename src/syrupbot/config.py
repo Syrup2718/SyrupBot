@@ -73,6 +73,8 @@ class Config:
     lull_probability: float = 0.1
     lull_min_seconds: float = 120.0
     lull_max_seconds: float = 1800.0
+    # 啟動時把自己在每個伺服器的暱稱改成角色名。
+    sync_nickname: bool = True
 
     @classmethod
     def from_env(cls) -> "Config":
@@ -182,4 +184,5 @@ class Config:
             lull_probability=lull_probability,
             lull_min_seconds=lull_min,
             lull_max_seconds=lull_max,
+            sync_nickname=_parse_bool(os.environ.get("SYNC_NICKNAME", "true")),
         )

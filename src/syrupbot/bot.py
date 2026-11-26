@@ -79,12 +79,27 @@ def _llm_status_embed(status: LLMStatus) -> discord.Embed:
     return embed
 
 
+def nickname_change(
+    current_nick: str | None, account_name: str, wanted: str | None
+) -> tuple[bool, str | None]:
+    """回傳 ``(要不要改, 新暱稱)``。
+
+    想要的名字剛好等於帳號名稱時清掉暱稱(新暱稱為 None),顯示結果相同但比較乾淨。
+    Discord 暱稱上限 32 字,超過就截斷。
+    """
+    if wanted is None:
+        return False, None
+    target = None if wanted == account_name else wanted[:32]
+    return current_nick != target, target
+
+
 class SyrupBot(discord.Client):
     """收 Discord 訊息事件,交給 pipeline 處理並回覆。"""
 
     def __init__(
         self, pipeline: ChatPipeline, channel_policy: ChannelPolicy,
         *, turn_window_seconds: float = DEFAULT_TURN_WINDOW_SECONDS,
+        nickname: str | None = None,
     ) -> None:
         intents = discord.Intents.default()
         # message_content 是特權 intent,需在 Developer Portal 開啟,
@@ -96,6 +111,8 @@ class SyrupBot(discord.Client):
         self._pipeline = pipeline
         self._policy = channel_policy
         self._turns = TurnScheduler(turn_window_seconds)
+        # 每個伺服器要顯示的暱稱(通常是角色名);None 代表不動暱稱。
+        self._nickname = nickname
         self._turn_locks: dict[int, asyncio.Lock] = {}
         self._lull_waits: dict[int, asyncio.Task[None]] = {}
         self.tree = app_commands.CommandTree(self)
@@ -118,6 +135,27 @@ class SyrupBot(discord.Client):
                     "同步斜線指令失敗(請確認 bot 是用含 applications.commands "
                     "scope 的網址邀請的)"
                 )
+        for guild in self.guilds:
+            await self._sync_nickname(guild)
+
+    async def on_guild_join(self, guild: discord.Guild) -> None:
+        await self._sync_nickname(guild)
+
+    async def _sync_nickname(self, guild: discord.Guild) -> None:
+        """把自己在這個伺服器的暱稱改成角色名;沒權限時只記警告。"""
+        me = guild.me
+        if me is None or self.user is None:
+            return
+        should_change, nick = nickname_change(me.nick, self.user.name, self._nickname)
+        if not should_change:
+            return
+        try:
+            await me.edit(nick=nick)
+            logger.info("已把伺服器 %s 的暱稱改成 %s", guild.name, nick or self.user.name)
+        except discord.Forbidden:
+            logger.warning("伺服器 %s 沒有給「變更暱稱」權限,暱稱維持不變", guild.name)
+        except discord.HTTPException:
+            logger.exception("修改伺服器 %s 的暱稱失敗", guild.name)
 
     def _register_commands(self) -> None:
         """註冊伺服器的狀態查詢與管理指令。"""
