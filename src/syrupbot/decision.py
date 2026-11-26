@@ -94,6 +94,8 @@ class DecisionEngine:
         # 話量疲勞:每次回覆 +1,依半衰期隨時間衰減(參考 MaiBot 的發言額度)。
         self._fatigue: dict[int, float] = {}
         self._fatigue_updated: dict[int, float] = {}
+        # 每頻道回覆別的 bot 的時間,用來限制 bot 之間的連鎖對話。
+        self._bot_replies: dict[int, list[float]] = {}
 
     async def decide(self, msg: IncomingMessage) -> ReplyDecision:
         """判斷這則訊息要不要回。"""
@@ -245,13 +247,35 @@ class DecisionEngine:
 
     def skip_reason(self, msg: IncomingMessage) -> str | None:
         """提供回合收集與決策共用的硬規則。"""
-        if msg.author_is_bot:
-            return "發話者是 bot(只看不回)"
+        if msg.author_is_bot and (reason := self.bot_block_reason(msg)):
+            return reason
         if not self._policy.is_allowed(msg.channel_id):
             return "頻道不在白名單"
         if self._looks_like_command(msg.content):
             return "看起來是給別的 bot 的指令"
         return None
+
+    def bot_block_reason(self, msg: IncomingMessage) -> str | None:
+        """別的 bot 的訊息不能回的原因;可以進入一般判斷時回傳 None。
+
+        上限是防止兩個 bot 互相接話停不下來的最後保險。
+        """
+        mode = self._config.bot_reply_mode
+        if mode == "off":
+            return "發話者是 bot(設定為只看不回)"
+        if mode == "mention" and not (msg.mentions_bot or msg.is_reply_to_bot):
+            return "發話者是 bot,而且沒有 @ 或回覆她"
+        now = self._clock()
+        window = self._config.bot_reply_window_seconds
+        recent = [t for t in self._bot_replies.get(msg.channel_id, []) if now - t < window]
+        self._bot_replies[msg.channel_id] = recent
+        if len(recent) >= self._config.bot_reply_max:
+            return f"最近 {window:g} 秒內已經回 bot {len(recent)} 次,先停一下"
+        return None
+
+    def record_bot_reply(self, channel_id: int) -> None:
+        """回覆了別的 bot,計入防連鎖上限。"""
+        self._bot_replies.setdefault(channel_id, []).append(self._clock())
 
     def channel_allowed(self, channel_id: int) -> bool:
         """這個頻道是否在漿糖可互動的範圍內。"""

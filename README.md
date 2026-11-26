@@ -82,6 +82,10 @@ if (-not (Test-Path llm.local.env)) {
 
 大家聊了一陣子後突然安靜很久時，她偶爾會自己接一句（冷場接話），沒有想說的就不說。
 
+別的 bot 說的話她也會回，判斷方式跟成員一樣（`BOT_REPLY_MODE=all`）。為了避免兩個 bot
+互相接話停不下來，每個頻道 10 分鐘內最多回 bot 3 次；只想在被 bot @ 時回可設 `mention`，
+完全不回設 `off`。她不會對 bot 的訊息貼表情。
+
 同一成員在同一頻道連發時，漿糖預設等約 0.8 秒，對方每多打一則就再多等一下，最多把四則合成一個回合判斷一次。頻道很熱絡時等待減半，被 @ 時也不會等太久。
 換人發言時會結束前一個回合。每個頻道按順序判斷、生成和送出，回覆確認送出才會進入短期記憶。
 
@@ -173,6 +177,8 @@ bot 啟動後，用瀏覽器打開 <http://127.0.0.1:8787/> 就能看到：
 | `ALLOWED_CHANNEL_IDS` | (空) | 留空=所有頻道;填逗號分隔的頻道 ID=只在這些頻道互動 |
 | `LLM_TEMPERATURE` | `1.1` | 回覆生成溫度,偏高讓語氣更口語 |
 | `REACTIONS_ENABLED` | `true` | 表情功能總開關 |
+| `BOT_REPLY_MODE` | `all` | 回覆別的 bot:`off` 只看不回、`mention` 被 @ 或回覆才回、`all` 跟成員一樣判斷 |
+| `BOT_REPLY_MAX` / `BOT_REPLY_WINDOW_SECONDS` | `3` / `600` | 每頻道在這段時間內最多回 bot 幾次,防止 bot 互相接話停不下來 |
 | `SELF_REACTION_PROBABILITY` | `0.2` | 看到訊息時自己貼表情的機率 |
 | `FOLLOW_REACTION_PROBABILITY` | `0.5` | 別人按了表情時跟著按的機率 |
 | `FOLLOW_REACTION_MIN_COUNT` | `2` | 至少幾人按過她才跟(`1`=有人按就可能跟) |

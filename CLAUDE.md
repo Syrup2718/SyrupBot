@@ -68,8 +68,9 @@ discord 事件
   的流程都在這。新功能優先考慮在這裡插一層。
 
 - **`decision.py` ★核心** — 「是否回覆」決策,SyrupBot 與傳統 bot 的本質差異。
-  - **第一關(免費硬規則)**:略過 bot/自己(別的 bot 的發言會經
-    `ChatPipeline.observe` 記進上下文,只看不回)、不在白名單的頻道、別人的指令前綴、
+  - **第一關(免費硬規則)**:略過自己;別的 bot 依 `BOT_REPLY_MODE`(off/mention/all)
+    與 `BOT_REPLY_MAX`/`BOT_REPLY_WINDOW_SECONDS` 連鎖上限決定能不能進判斷(不能回的
+    只經 `ChatPipeline.observe` 記進上下文)、不在白名單的頻道、別人的指令前綴、
     冷卻時間內的訊息。
   - **捷徑**:被 @ 提及、被 reply，或原發話者在 60 秒內用明確的第二人稱接話時直接回。
   - **第二關(策略,由 `DECISION_STRATEGY` 切換)**:

@@ -75,6 +75,11 @@ class Config:
     lull_max_seconds: float = 1800.0
     # 啟動時把自己在每個伺服器的暱稱改成角色名。
     sync_nickname: bool = True
+    # 回覆別的 bot:off(只看不回)、mention(被 @ 或回覆才回)、all(跟成員一樣判斷)。
+    bot_reply_mode: str = "all"
+    # 防止 bot 互相接話停不下來:每頻道在這段時間內最多回 bot 幾次。
+    bot_reply_max: int = 3
+    bot_reply_window_seconds: float = 600.0
     # 網頁後台:port 0 代表關閉;預設只聽本機。
     dashboard_host: str = "127.0.0.1"
     dashboard_port: int = 8787
@@ -137,6 +142,15 @@ class Config:
         lull_max = float(os.environ.get("LULL_MAX_SECONDS", "1800"))
         if not (math.isfinite(lull_min) and math.isfinite(lull_max) and 0 < lull_min <= lull_max):
             raise ValueError("LULL_MIN_SECONDS 與 LULL_MAX_SECONDS 必須為正數且下限不大於上限")
+        bot_reply_mode = os.environ.get("BOT_REPLY_MODE", "all").lower()
+        if bot_reply_mode not in ("off", "mention", "all"):
+            raise RuntimeError(
+                f"BOT_REPLY_MODE 必須是 'off'、'mention' 或 'all',收到:{bot_reply_mode!r}"
+            )
+        bot_reply_max = int(os.environ.get("BOT_REPLY_MAX", "3"))
+        bot_reply_window = float(os.environ.get("BOT_REPLY_WINDOW_SECONDS", "600"))
+        if bot_reply_max < 0 or not math.isfinite(bot_reply_window) or bot_reply_window < 0:
+            raise ValueError("BOT_REPLY_MAX 與 BOT_REPLY_WINDOW_SECONDS 必須是非負數")
         return cls(
             discord_token=os.environ["DISCORD_TOKEN"],
             deepseek_api_key=os.environ["DEEPSEEK_API_KEY"],
@@ -189,6 +203,9 @@ class Config:
             lull_min_seconds=lull_min,
             lull_max_seconds=lull_max,
             sync_nickname=_parse_bool(os.environ.get("SYNC_NICKNAME", "true")),
+            bot_reply_mode=bot_reply_mode,
+            bot_reply_max=bot_reply_max,
+            bot_reply_window_seconds=bot_reply_window,
             dashboard_host=os.environ.get("DASHBOARD_HOST", "127.0.0.1"),
             dashboard_port=int(os.environ.get("DASHBOARD_PORT", "8787")),
             dashboard_token=os.environ.get("DASHBOARD_TOKEN", ""),

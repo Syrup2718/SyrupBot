@@ -91,7 +91,13 @@ class ChatPipeline:
     def can_merge(self, msg: IncomingMessage) -> bool:
         return not msg.addresses_others and self._decision.skip_reason(msg) is None
 
-    def observe(self, msg: IncomingMessage, *, edited: bool = False) -> str | None:
+    def bot_block_reason(self, msg: IncomingMessage) -> str | None:
+        """別的 bot 的這則訊息不能回的原因;可以走一般判斷時回傳 None。"""
+        return self._decision.bot_block_reason(msg)
+
+    def observe(
+        self, msg: IncomingMessage, *, edited: bool = False, note: str = ""
+    ) -> str | None:
         """只把訊息記進上下文、不做任何回覆判斷(用於其他 bot 的發言)。
 
         回傳沒記下的原因;有記下時回傳 None。編輯過的訊息會依 ID 更新原本那筆。
@@ -117,6 +123,8 @@ class ChatPipeline:
         detail = "編輯後更新上下文" if updated else (
             "編輯後補記進上下文" if edited else "已記進上下文"
         )
+        if note:
+            detail = f"{detail}(不回:{note})"
         self.monitor.record(
             events.BOT_SEEN, msg.channel_id, author=msg.author, text=msg.content,
             detail=detail,
@@ -169,7 +177,9 @@ class ChatPipeline:
                 message_id=item.message_id,
             )
             self.monitor.record(
-                events.HUMAN, channel_id, author=item.author, text=item.content
+                events.BOT_SEEN if item.author_is_bot else events.HUMAN,
+                channel_id, author=item.author, text=item.content,
+                detail="已記進上下文,會判斷要不要回" if item.author_is_bot else "",
             )
 
         auto_gif = None
@@ -259,6 +269,8 @@ class ChatPipeline:
         self.monitor.record(events.REPLY, msg.channel_id, author=self._persona.name, text=text)
         if sent:
             self._decision.record_reply(msg.channel_id)
+            if msg.author_is_bot:
+                self._decision.record_bot_reply(msg.channel_id)
         self._decision.record_delivered_reply(msg)
 
     def snapshot(self) -> dict:

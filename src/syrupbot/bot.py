@@ -315,14 +315,17 @@ class SyrupBot(discord.Client):
 
     async def on_message(self, message: discord.Message) -> None:
         if message.author.bot:
-            # 別的 bot 的話只記進上下文讓漿糖「看得到」,不觸發回覆或表情,
-            # 避免兩個 bot 互相接話停不下來。自己的訊息由送出流程記錄。
-            if self.user is None or message.author.id != self.user.id:
-                self._pipeline.observe(self._to_incoming(message))
-            return
-
-        incoming = self._to_incoming(message)
-        self._schedule_lull(message.channel, incoming)
+            # 自己的訊息由送出流程記錄。別的 bot 若不能回(設定、上限等),
+            # 就只記進上下文;可以回時跟成員訊息走同一條判斷流程。
+            if self.user is not None and message.author.id == self.user.id:
+                return
+            incoming = self._to_incoming(message)
+            if reason := self._pipeline.bot_block_reason(incoming):
+                self._pipeline.observe(incoming, note=reason)
+                return
+        else:
+            incoming = self._to_incoming(message)
+            self._schedule_lull(message.channel, incoming)
         turn = self._turns.submit(
             incoming, self._pipeline.context_revision(incoming.channel_id),
             merge=self._pipeline.can_merge(incoming),

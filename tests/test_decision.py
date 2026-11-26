@@ -97,10 +97,44 @@ def _engine(config: Config, llm=None, rng=None, clock=None):
 
 
 @pytest.mark.asyncio
-async def test_ignores_other_bots() -> None:
-    engine, _ = _engine(_base_config())
-    decision = await engine.decide(_msg(author_is_bot=True))
+async def test_ignores_other_bots_when_mode_off() -> None:
+    engine, _ = _engine(_base_config(bot_reply_mode="off"), rng=_FixedRandom(0.0))
+    decision = await engine.decide(_msg(author_is_bot=True, mentions_bot=True))
     assert decision.should_reply is False
+
+
+@pytest.mark.asyncio
+async def test_mention_mode_only_answers_bots_that_address_her() -> None:
+    config = _base_config(bot_reply_mode="mention", reply_probability=1.0)
+    engine, _ = _engine(config, rng=_FixedRandom(0.0))
+    assert (await engine.decide(_msg(author_is_bot=True))).should_reply is False
+    assert (await engine.decide(_msg(author_is_bot=True, mentions_bot=True))).should_reply
+
+
+@pytest.mark.asyncio
+async def test_all_mode_treats_bots_like_members() -> None:
+    config = _base_config(bot_reply_mode="all", reply_probability=1.0)
+    engine, _ = _engine(config, rng=_FixedRandom(0.0))
+    assert (await engine.decide(_msg(author_is_bot=True))).should_reply is True
+
+
+@pytest.mark.asyncio
+async def test_bot_reply_limit_stops_bot_chains_and_recovers() -> None:
+    clock = Clock()
+    config = _base_config(bot_reply_max=2, bot_reply_window_seconds=100.0)
+    engine, _ = _engine(config, clock=clock)
+    bot_msg = _msg(author_is_bot=True, mentions_bot=True)
+    for _ in range(2):
+        assert (await engine.decide(bot_msg)).should_reply is True
+        engine.record_bot_reply(1)
+        clock.now += 1
+    blocked = await engine.decide(bot_msg)
+    assert blocked.should_reply is False
+    assert "先停一下" in blocked.reason
+    # 成員不受影響
+    assert (await engine.decide(_msg(mentions_bot=True))).should_reply is True
+    clock.now += 100
+    assert (await engine.decide(bot_msg)).should_reply is True
 
 
 @pytest.mark.asyncio

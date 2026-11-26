@@ -241,9 +241,10 @@ async def test_clear_invalidates_a_turn_still_in_the_queue(setup_pipeline):
     decision.decide.assert_not_awaited()
 
 
-async def test_other_bot_messages_are_seen_but_never_answered(setup_pipeline):
+async def test_blocked_bot_messages_are_seen_but_not_answered(setup_pipeline):
     pipeline, context, decision, llm = setup_pipeline
     decision.channel_allowed.return_value = True
+    decision.bot_block_reason.return_value = "設定為只看不回"
     bot = SyrupBot(pipeline, ChannelPolicy(), turn_window_seconds=10)
     bot._connection.user = SimpleNamespace(id=42)
     other = replace(_INCOMING, author="音樂bot", content="正在播放:晴天", author_is_bot=True)
@@ -293,3 +294,31 @@ async def test_sync_nickname_edits_and_survives_missing_permission(setup_pipelin
         edit=AsyncMock(side_effect=discord.Forbidden(Mock(status=403, reason="x"), "no")),
     )
     await bot._sync_nickname(SimpleNamespace(me=denied, name="沒權限群"))  # 不應拋錯
+
+
+async def test_answerable_bot_message_goes_through_reply_flow(setup_pipeline, monkeypatch):
+    pipeline, context, decision, llm = setup_pipeline
+    decision.bot_block_reason.return_value = None
+    decision.skip_reason.return_value = None
+    llm.generate_reply.return_value = "那首我也喜歡"
+    pipeline.reaction_for = Mock(return_value=None)
+    bot = SyrupBot(pipeline, ChannelPolicy(), turn_window_seconds=0)
+    bot._connection.user = SimpleNamespace(id=42)
+    monkeypatch.setattr(bot, "_to_incoming", lambda message: message.incoming)
+    monkeypatch.setattr(bot_module, "_TYPING_SECONDS_PER_CHAR", 0)
+    monkeypatch.setattr(bot_module, "_TYPING_MIN_SECONDS", 0)
+
+    @asynccontextmanager
+    async def typing():
+        yield
+
+    channel = SimpleNamespace(id=1, typing=typing, send=AsyncMock())
+    other = replace(_INCOMING, author="音樂bot", content="正在播放:晴天",
+                    author_is_bot=True, author_id=99)
+    message = SimpleNamespace(author=SimpleNamespace(bot=True, id=99),
+                              channel=channel, incoming=other)
+    await bot.on_message(message)
+
+    decision.decide.assert_awaited_once()
+    channel.send.assert_awaited_once_with("那首我也喜歡")
+    decision.record_bot_reply.assert_called_once_with(1)
