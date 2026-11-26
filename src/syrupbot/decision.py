@@ -129,6 +129,13 @@ class DecisionEngine:
         self._fatigue_updated[channel_id] = now
         self._last_reply[channel_id] = now
 
+    def should_break_lull(self, channel_id: int) -> bool:
+        """冷場時擲一次骰,決定要不要給角色開口的機會(受冷卻與疲勞影響)。"""
+        if not self._policy.is_allowed(channel_id) or self._in_cooldown(channel_id):
+            return False
+        chance = self._config.lull_probability * self._fatigue_factor(channel_id)
+        return self._rng.random() < chance
+
     def fatigue(self, channel_id: int) -> float:
         """目前這個頻道的話量疲勞值(約等於「最近講了幾次」)。"""
         return self._fatigue_at(channel_id, self._clock())

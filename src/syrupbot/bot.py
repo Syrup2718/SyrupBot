@@ -15,7 +15,7 @@ from discord import app_commands
 from .channels import ChannelPolicy
 from .config import DEFAULT_TURN_WINDOW_SECONDS
 from .decision import IncomingMessage
-from .pipeline import ChatPipeline, LLMStatus, PipelineResult
+from .pipeline import ChatPipeline, LLMStatus, PipelineResult, lull_message
 from .turns import PendingTurn, TurnScheduler
 
 logger = logging.getLogger(__name__)
@@ -97,6 +97,7 @@ class SyrupBot(discord.Client):
         self._policy = channel_policy
         self._turns = TurnScheduler(turn_window_seconds)
         self._turn_locks: dict[int, asyncio.Lock] = {}
+        self._lull_waits: dict[int, asyncio.Task[None]] = {}
         self.tree = app_commands.CommandTree(self)
         self._synced = False
         self._register_commands()
@@ -216,6 +217,7 @@ class SyrupBot(discord.Client):
             return
 
         incoming = self._to_incoming(message)
+        self._schedule_lull(message.channel, incoming)
         turn = self._turns.submit(
             incoming, self._pipeline.context_revision(incoming.channel_id),
             merge=self._pipeline.can_merge(incoming),
@@ -250,6 +252,34 @@ class SyrupBot(discord.Client):
                     await self._send_replies(channel, messages[-1], result)
         except Exception:  # noqa: BLE001 — 單一回合失敗不影響後續回合。
             logger.exception("處理頻道 %s 的對話回合時發生錯誤", channel_id)
+
+    def _schedule_lull(self, channel: discord.abc.Messageable, msg: IncomingMessage) -> None:
+        """有人講話就重設冷場計時;安靜夠久時給角色一次開口的機會。"""
+        if (waiting := self._lull_waits.pop(msg.channel_id, None)) is not None:
+            waiting.cancel()
+        delay = self._pipeline.note_activity(msg)
+        if delay is None:
+            return
+        revision = self._pipeline.context_revision(msg.channel_id)
+        self._lull_waits[msg.channel_id] = asyncio.create_task(
+            self._wait_for_lull(channel, msg.channel_id, delay, revision)
+        )
+
+    async def _wait_for_lull(
+        self, channel: discord.abc.Messageable, channel_id: int, delay: float, revision: int
+    ) -> None:
+        await asyncio.sleep(delay)
+        # 睡醒後就不再被新訊息取消,避免送到一半被中斷。
+        if self._lull_waits.get(channel_id) is asyncio.current_task():
+            del self._lull_waits[channel_id]
+        lock = self._turn_locks.setdefault(channel_id, asyncio.Lock())
+        try:
+            async with lock:
+                result = await self._pipeline.handle_lull(channel_id, revision)
+                if result.replies:
+                    await self._send_replies(channel, lull_message(channel_id), result)
+        except Exception:  # noqa: BLE001 — 冷場開口失敗不影響其他流程。
+            logger.exception("頻道 %s 冷場開口時發生錯誤", channel_id)
 
     async def on_raw_reaction_add(
         self, payload: discord.RawReactionActionEvent

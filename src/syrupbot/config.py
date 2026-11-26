@@ -69,6 +69,10 @@ class Config:
     look_probability: float = 0.3
     # 話量疲勞的半衰期(秒):講越多越安靜,隨時間恢復;0 代表關閉。
     talk_fatigue_half_life_seconds: float = 300.0
+    # 冷場接話:安靜太久時,開口的機率(0 關閉)與等待秒數的上下限。
+    lull_probability: float = 0.1
+    lull_min_seconds: float = 120.0
+    lull_max_seconds: float = 1800.0
 
     @classmethod
     def from_env(cls) -> "Config":
@@ -120,6 +124,13 @@ class Config:
         fatigue_half_life = float(os.environ.get("TALK_FATIGUE_HALF_LIFE_SECONDS", "300"))
         if not math.isfinite(fatigue_half_life) or fatigue_half_life < 0:
             raise ValueError("TALK_FATIGUE_HALF_LIFE_SECONDS 必須是有限且非負的秒數")
+        lull_probability = float(os.environ.get("LULL_PROBABILITY", "0.1"))
+        if not 0 <= lull_probability <= 1:
+            raise ValueError("LULL_PROBABILITY 必須介於 0 和 1")
+        lull_min = float(os.environ.get("LULL_MIN_SECONDS", "120"))
+        lull_max = float(os.environ.get("LULL_MAX_SECONDS", "1800"))
+        if not (math.isfinite(lull_min) and math.isfinite(lull_max) and 0 < lull_min <= lull_max):
+            raise ValueError("LULL_MIN_SECONDS 與 LULL_MAX_SECONDS 必須為正數且下限不大於上限")
         return cls(
             discord_token=os.environ["DISCORD_TOKEN"],
             deepseek_api_key=os.environ["DEEPSEEK_API_KEY"],
@@ -168,4 +179,7 @@ class Config:
             gif_cooldown_seconds=gif_cooldown,
             look_probability=look_probability,
             talk_fatigue_half_life_seconds=fatigue_half_life,
+            lull_probability=lull_probability,
+            lull_min_seconds=lull_min,
+            lull_max_seconds=lull_max,
         )

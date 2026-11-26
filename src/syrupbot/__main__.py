@@ -13,6 +13,7 @@ from .decision import DecisionEngine
 from .gifs import GifPicker
 from .local_model import local_model
 from .llm import LLMClient
+from .lull import LullWatcher
 from .persona import Persona
 from .pipeline import ChatPipeline
 from .reaction import ReactionEngine
@@ -37,7 +38,9 @@ def main() -> None:
     decision = DecisionEngine(config, persona, llm, context, policy=policy)
     reaction = ReactionEngine(config, persona, policy=policy)
     gifs = GifPicker(config, persona)
-    pipeline = ChatPipeline(persona, context, decision, llm, reaction, gifs)
+    pipeline = ChatPipeline(
+        persona, context, decision, llm, reaction, gifs, lull=LullWatcher(config)
+    )
 
     bot = SyrupBot(pipeline, policy, turn_window_seconds=config.turn_window_seconds)
     with local_model(config):

@@ -96,6 +96,10 @@ discord 事件
 
 - **`local_model.py`** — 選用的 llama.cpp 啟動與健康檢查，由入口點管理程序生命週期。
 
+- **`lull.py`** — 冷場偵測(參考 MaiBot 的靜默查看):依最近訊息的平均間隔推算
+  安靜多久算冷場。`bot.py` 只負責計時,到點後由 `ChatPipeline.handle_lull` 擲骰
+  (`DecisionEngine.should_break_lull`,受冷卻與疲勞影響)並讓模型決定要不要開口。
+
 - **`context.py`** — 每頻道近期上下文(`ConversationStore`),記憶體、重啟即清空,
   含發話者名;`transcript()` 組成給 LLM 的逐字稿。這是**短期上下文**,不是長期記憶。
 

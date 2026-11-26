@@ -7,19 +7,27 @@
 from __future__ import annotations
 
 import logging
-from random import Random
 from dataclasses import dataclass, field, replace
+from random import Random
 
 from .context import ConversationStore
 from .decision import DecisionEngine, IncomingMessage
 from .gifs import GifPicker, GifSelection
 from .llm import CompletionStats, LLMClient
+from .lull import LullWatcher
 from .persona import Persona
 from .postprocess import humanize, is_chat_replay, split_chat_reply
 from .reaction import ReactionEngine
 from .turns import combine_turn
 
 logger = logging.getLogger(__name__)
+
+# 冷場時附加在 prompt 後面的提醒,讓模型自己決定有沒有值得說的話。
+_LULL_NOTE = (
+    "\n\n群組已經安靜了一陣子，最後一則訊息不是你說的。"
+    "只有在你想到和剛才話題自然相關、或真的有趣的事時才開口，一句就好。"
+    "不要硬找話題，也不要問大家怎麼不講話。沒有想說的就選擇不說。"
+)
 
 
 @dataclass(frozen=True)
@@ -56,6 +64,7 @@ class ChatPipeline:
         reaction: ReactionEngine,
         gifs: GifPicker | None = None,
         rng: Random | None = None,
+        lull: LullWatcher | None = None,
     ) -> None:
         self._persona = persona
         self._context = context
@@ -64,6 +73,7 @@ class ChatPipeline:
         self._reaction = reaction
         self._gifs = gifs
         self._rng = rng or Random()
+        self._lull = lull
 
     async def handle(self, msg: IncomingMessage) -> PipelineResult:
         """在沒有回合收集器時，規劃單則訊息的表情與回覆。"""
@@ -82,6 +92,33 @@ class ChatPipeline:
         if not msg.content.strip() or not self._decision.channel_allowed(msg.channel_id):
             return
         self._context.add(msg.channel_id, msg.author, msg.content, is_self=False)
+
+    def note_activity(self, msg: IncomingMessage) -> float | None:
+        """成員講話時更新冷場計時,回傳安靜多久算冷場(不需要偵測時回 None)。"""
+        if self._lull is None or self._decision.skip_reason(msg) is not None:
+            return None
+        self._lull.note_message(msg.channel_id)
+        return self._lull.delay_for(msg.channel_id)
+
+    async def handle_lull(self, channel_id: int, revision: int) -> PipelineResult:
+        """冷場時給角色一次開口的機會;由模型決定有沒有值得說的話。"""
+        history = self._context.messages(channel_id)
+        if not history or history[-1].is_self or self.context_revision(channel_id) != revision:
+            return PipelineResult()
+        if not self._decision.should_break_lull(channel_id):
+            return PipelineResult()
+        transcript = self._context.transcript(channel_id, self._persona.name)
+        should_reply, raw_reply = await self._llm.judge_and_reply(
+            self._persona.judge_prompt_for_turn(self._rng.random) + _LULL_NOTE,
+            transcript, channel_id=channel_id,
+        )
+        if not should_reply or self.context_revision(channel_id) != revision:
+            return PipelineResult()
+        reply = humanize(raw_reply)
+        if not reply or self._is_replay(lull_message(channel_id), reply):
+            return PipelineResult()
+        logger.debug("頻道 %s 冷場,角色主動開口", channel_id)
+        return PipelineResult(replies=split_chat_reply(reply), context_revision=revision)
 
     def reaction_for(self, msg: IncomingMessage) -> str | None:
         return self._reaction.decide_self_reaction(msg)
@@ -199,3 +236,8 @@ class ChatPipeline:
     def follow_reaction_min_count(self) -> int:
         """至少要有幾個人按過,漿糖才跟著按。"""
         return self._reaction.follow_min_count
+
+
+def lull_message(channel_id: int) -> IncomingMessage:
+    """冷場開口沒有觸發訊息,用一則空白訊息代表,送出後不會進入接話模式。"""
+    return IncomingMessage(channel_id, "", "", False, False, False)
