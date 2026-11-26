@@ -289,3 +289,83 @@ class _FixedRandom(Random):
 
     def random(self) -> float:  # type: ignore[override]
         return self._value
+
+
+# ── hybrid 策略與話量疲勞 ──
+
+
+@pytest.mark.asyncio
+async def test_hybrid_asks_llm_only_when_look_roll_hits() -> None:
+    llm = FakeLLM(should_reply=True, reply="真的假的")
+    config = _base_config(decision_strategy="hybrid", look_probability=0.3)
+
+    miss, _ = _engine(config, llm=llm, rng=_FixedRandom(0.5))
+    assert (await miss.decide(_msg())).should_reply is False
+    assert llm.judge_calls == 0
+
+    hit, _ = _engine(config, llm=llm, rng=_FixedRandom(0.1))
+    decision = await hit.decide(_msg())
+    assert decision.should_reply is True
+    assert decision.reply == "真的假的"
+    assert llm.judge_calls == 1
+
+
+@pytest.mark.asyncio
+async def test_hybrid_respects_llm_refusal() -> None:
+    llm = FakeLLM(should_reply=False)
+    config = _base_config(decision_strategy="hybrid", look_probability=1.0)
+    engine, _ = _engine(config, llm=llm, rng=_FixedRandom(0.0))
+    assert (await engine.decide(_msg())).should_reply is False
+    assert llm.judge_calls == 1
+
+
+@pytest.mark.asyncio
+async def test_fatigue_lowers_score_and_recovers_over_time() -> None:
+    clock = Clock()
+    config = _base_config(
+        reply_probability=0.6, reply_cooldown_seconds=0.0,
+        talk_fatigue_half_life_seconds=100.0,
+    )
+    engine, _ = _engine(config, rng=_FixedRandom(0.4), clock=clock)
+    assert (await engine.decide(_msg())).should_reply is True
+
+    engine.record_reply(1)
+    engine.record_reply(1)
+    assert engine.fatigue(1) == pytest.approx(2.0)
+    # 0.6 / (1 + 2) = 0.2 < 0.4 → 講太多,不插話。
+    assert (await engine.decide(_msg())).should_reply is False
+
+    clock.now += 300  # 三個半衰期後疲勞剩 0.25
+    assert engine.fatigue(1) == pytest.approx(0.25)
+    assert (await engine.decide(_msg())).should_reply is True
+
+
+@pytest.mark.asyncio
+async def test_fatigue_is_channel_local_and_can_be_disabled() -> None:
+    clock = Clock()
+    engine, _ = _engine(_base_config(), clock=clock)
+    engine.record_reply(1)
+    assert engine.fatigue(1) > 0
+    assert engine.fatigue(2) == 0
+
+    off, _ = _engine(_base_config(talk_fatigue_half_life_seconds=0.0), clock=clock)
+    off.record_reply(1)
+    assert off.fatigue(1) == 0
+
+
+@pytest.mark.asyncio
+async def test_fatigue_does_not_block_mentions() -> None:
+    engine, _ = _engine(_base_config(reply_cooldown_seconds=0.0), clock=Clock())
+    for _ in range(10):
+        engine.record_reply(1)
+    assert (await engine.decide(_msg(mentions_bot=True))).should_reply is True
+
+
+@pytest.mark.asyncio
+async def test_llm_strategy_skips_judge_when_fatigued() -> None:
+    llm = FakeLLM()
+    config = _base_config(decision_strategy="llm", reply_cooldown_seconds=0.0)
+    engine, _ = _engine(config, llm=llm, rng=_FixedRandom(0.6), clock=Clock())
+    engine.record_reply(1)  # 倍率 0.5 < 擲骰 0.6
+    assert (await engine.decide(_msg())).should_reply is False
+    assert llm.judge_calls == 0

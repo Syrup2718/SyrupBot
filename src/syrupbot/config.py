@@ -44,7 +44,7 @@ class Config:
     decision_model: str
     temperature: float
     persona: str
-    decision_strategy: str  # "heuristic" 或 "llm"
+    decision_strategy: str  # "heuristic"、"llm" 或 "hybrid"
     reply_probability: float
     reply_cooldown_seconds: float
     decision_cooldown_seconds: float
@@ -65,6 +65,10 @@ class Config:
     gifs_enabled: bool = True
     gif_reply_probability: float = 0.12
     gif_cooldown_seconds: float = 90.0
+    # hybrid 策略:先用 heuristic 分數決定「要不要看」,過了才讓 LLM 判斷。
+    look_probability: float = 0.3
+    # 話量疲勞的半衰期(秒):講越多越安靜,隨時間恢復;0 代表關閉。
+    talk_fatigue_half_life_seconds: float = 300.0
 
     @classmethod
     def from_env(cls) -> "Config":
@@ -81,9 +85,10 @@ class Config:
             )
 
         strategy = os.environ.get("DECISION_STRATEGY", "heuristic").lower()
-        if strategy not in ("heuristic", "llm"):
+        if strategy not in ("heuristic", "llm", "hybrid"):
             raise RuntimeError(
-                f"DECISION_STRATEGY 必須是 'heuristic' 或 'llm',收到:{strategy!r}"
+                "DECISION_STRATEGY 必須是 'heuristic'、'llm' 或 'hybrid',"
+                f"收到:{strategy!r}"
             )
 
         llama_exe = os.environ.get("LLAMA_SERVER_EXE") or None
@@ -109,6 +114,12 @@ class Config:
         gif_cooldown = float(os.environ.get("GIF_COOLDOWN_SECONDS", "90"))
         if not math.isfinite(gif_cooldown) or gif_cooldown < 0:
             raise ValueError("GIF_COOLDOWN_SECONDS 必須是有限且非負的秒數")
+        look_probability = float(os.environ.get("LOOK_PROBABILITY", "0.3"))
+        if not 0 <= look_probability <= 1:
+            raise ValueError("LOOK_PROBABILITY 必須介於 0 和 1")
+        fatigue_half_life = float(os.environ.get("TALK_FATIGUE_HALF_LIFE_SECONDS", "300"))
+        if not math.isfinite(fatigue_half_life) or fatigue_half_life < 0:
+            raise ValueError("TALK_FATIGUE_HALF_LIFE_SECONDS 必須是有限且非負的秒數")
         return cls(
             discord_token=os.environ["DISCORD_TOKEN"],
             deepseek_api_key=os.environ["DEEPSEEK_API_KEY"],
@@ -155,4 +166,6 @@ class Config:
             gifs_enabled=_parse_bool(os.environ.get("GIFS_ENABLED", "true")),
             gif_reply_probability=gif_probability,
             gif_cooldown_seconds=gif_cooldown,
+            look_probability=look_probability,
+            talk_fatigue_half_life_seconds=fatigue_half_life,
         )

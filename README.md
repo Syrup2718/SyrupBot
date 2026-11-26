@@ -75,7 +75,10 @@ if (-not (Test-Path llm.local.env)) {
 ```
 
 通過頻道與指令過濾後，**@ 漿糖**或**回覆她的訊息**會直接觸發回覆。一般訊息則由
-`DECISION_STRATEGY` 決定。`heuristic` 使用本機規則與機率，`llm` 會請模型依上下文判斷。
+`DECISION_STRATEGY` 決定。`heuristic` 使用本機規則與機率，`llm` 會請模型依上下文判斷，
+`hybrid` 則先用本機規則決定要不要看、抽中才問模型。
+
+她講得越多，主動插話的機率就越低（話量疲勞），之後隨時間慢慢恢復；被 @ 或回覆不受影響。
 
 同一成員在同一頻道連發時，漿糖預設等約 0.8 秒，最多把四則合成一個回合判斷一次。
 換人發言時會結束前一個回合。每個頻道按順序判斷、生成和送出，回覆確認送出才會進入短期記憶。
@@ -141,8 +144,10 @@ llama.cpp 回傳速度時，會顯示輸入處理與生成的 tok/s。其他 API
 
 | 變數 | 預設 | 作用 |
 |---|---|---|
-| `DECISION_STRATEGY` | `heuristic` | 判斷要不要回的策略:`heuristic`(機率規則,免費)或 `llm`(讀氣氛判斷,每則花 token) |
+| `DECISION_STRATEGY` | `heuristic` | 判斷要不要回的策略:`heuristic`(機率規則,免費)、`llm`(讀氣氛判斷,每則花 token)或 `hybrid`(抽中才問模型) |
 | `REPLY_PROBABILITY` | `0.08` | heuristic 下,一般訊息的基礎插話機率(調高=更愛講話) |
+| `LOOK_PROBABILITY` | `0.3` | hybrid 下,一般訊息交給模型判斷的基礎機率 |
+| `TALK_FATIGUE_HALF_LIFE_SECONDS` | `300` | 話量疲勞的半衰期;講越多越安靜,0 關閉 |
 | `TURN_WINDOW_SECONDS` | `0.8` | 收集同一成員連發的時間，`0` 可關閉合併 |
 | `REPLY_COOLDOWN_SECONDS` | `20` | 同頻道兩次主動回覆的最短間隔,防洗版 |
 | `DECISION_COOLDOWN_SECONDS` | `10` | llm 策略下,每頻道觸發判斷的最短間隔,控 API 成本 |

@@ -5,6 +5,8 @@
   第二關(策略):
     - heuristic:用機率+加權規則判斷,不花 API token。
     - llm:讓模型讀上下文自己決定要不要插話(一次呼叫同時產生回覆)。
+    - hybrid:先用 heuristic 分數決定「要不要看」,抽中才問 LLM,兼顧品質與成本。
+  話量疲勞:每次回覆累積疲勞、隨時間衰減;講越多,主動插話的機率越低。
   捷徑:被 @ 提及、被 reply，或收到明確的連續追問時直接回。
 
 策略由 config.decision_strategy 切換,介面不變,方便之後升級。
@@ -88,6 +90,9 @@ class DecisionEngine:
         self._last_reply: dict[int, float] = {}
         self._last_decision: dict[int, float] = {}
         self._follow_up_targets: dict[int, tuple[int, float]] = {}
+        # 話量疲勞:每次回覆 +1,依半衰期隨時間衰減(參考 MaiBot 的發言額度)。
+        self._fatigue: dict[int, float] = {}
+        self._fatigue_updated: dict[int, float] = {}
 
     async def decide(self, msg: IncomingMessage) -> ReplyDecision:
         """判斷這則訊息要不要回。"""
@@ -107,13 +112,38 @@ class DecisionEngine:
             return ReplyDecision(False, "還在回覆冷卻時間內")
 
         # ── 第二關:依策略判斷 ──
-        if self._config.decision_strategy == "llm":
+        strategy = self._config.decision_strategy
+        if strategy == "llm":
+            # 純 llm 策略沒有分數可打折,改成依疲勞程度擲骰決定要不要問模型。
+            if self._rng.random() >= self._fatigue_factor(msg.channel_id):
+                return ReplyDecision(False, "最近講太多了,先安靜一下")
             return await self._decide_llm(msg)
+        if strategy == "hybrid":
+            return await self._decide_hybrid(msg)
         return self._decide_heuristic(msg)
 
     def record_reply(self, channel_id: int) -> None:
-        """回覆產生後更新一般插話的冷卻計時。"""
-        self._last_reply[channel_id] = self._clock()
+        """回覆產生後更新一般插話的冷卻計時,並累積話量疲勞。"""
+        now = self._clock()
+        self._fatigue[channel_id] = self._fatigue_at(channel_id, now) + 1.0
+        self._fatigue_updated[channel_id] = now
+        self._last_reply[channel_id] = now
+
+    def fatigue(self, channel_id: int) -> float:
+        """目前這個頻道的話量疲勞值(約等於「最近講了幾次」)。"""
+        return self._fatigue_at(channel_id, self._clock())
+
+    def _fatigue_at(self, channel_id: int, now: float) -> float:
+        value = self._fatigue.get(channel_id, 0.0)
+        half_life = self._config.talk_fatigue_half_life_seconds
+        if value <= 0 or half_life <= 0:
+            return 0.0
+        elapsed = max(0.0, now - self._fatigue_updated[channel_id])
+        return value * 0.5 ** (elapsed / half_life)
+
+    def _fatigue_factor(self, channel_id: int) -> float:
+        """把疲勞換算成插話機率的倍率:講越多越小,沒講就是 1。"""
+        return 1.0 / (1.0 + self.fatigue(channel_id))
 
     def record_delivered_reply(self, msg: IncomingMessage) -> None:
         """Discord 送出回覆後，開始等待原發話者接話。"""
@@ -146,7 +176,21 @@ class DecisionEngine:
 
     def _decide_heuristic(self, msg: IncomingMessage) -> ReplyDecision:
         """機率 + 加權規則,不花 API token。"""
-        score = self._config.reply_probability
+        score = self._score(msg, self._config.reply_probability)
+        if self._rng.random() < score:
+            return ReplyDecision(True, f"heuristic 命中(score={score:.2f})")
+        return ReplyDecision(False, f"heuristic 未命中(score={score:.2f})")
+
+    async def _decide_hybrid(self, msg: IncomingMessage) -> ReplyDecision:
+        """先用免費分數決定「要不要看」,過了才讓 LLM 決定回不回(參考 MaiBot)。"""
+        score = self._score(msg, self._config.look_probability)
+        if self._rng.random() >= score:
+            return ReplyDecision(False, f"hybrid 沒抽到查看(score={score:.2f})")
+        return await self._decide_llm(msg)
+
+    def _score(self, msg: IncomingMessage, base: float) -> float:
+        """依訊息特徵加權,再乘上話量疲勞倍率,得到 0~1 的機率。"""
+        score = base
 
         if msg.content.rstrip().endswith(("?", "？")):
             score += 0.25  # 像有人在拋問題
@@ -159,10 +203,8 @@ class DecisionEngine:
         if len(msg.content.strip()) <= 2:
             score -= 0.1  # 太短的訊息(「哈」「ok」)不太需要回
 
-        score = max(0.0, min(score, 1.0))
-        if self._rng.random() < score:
-            return ReplyDecision(True, f"heuristic 命中(score={score:.2f})")
-        return ReplyDecision(False, f"heuristic 未命中(score={score:.2f})")
+        score *= self._fatigue_factor(msg.channel_id)
+        return max(0.0, min(score, 1.0))
 
     async def _decide_llm(self, msg: IncomingMessage) -> ReplyDecision:
         """讓 LLM 讀上下文自己決定;用判斷冷卻控制 API 成本。"""

@@ -77,6 +77,10 @@ discord 事件
       訊息長短),**不花 API token**。
     - `llm`:呼叫 `judge_and_reply`,讓模型讀上下文自己決定,**一次呼叫同時產生
       回覆**;以 `DECISION_COOLDOWN_SECONDS` 限制每頻道判斷頻率來控成本。
+    - `hybrid`:先用 heuristic 分數(基礎為 `LOOK_PROBABILITY`)決定「要不要看」,
+      抽中才走 llm 判斷。參考 MaiBot「查看頻率 ≠ 回覆頻率」的設計。
+  - **話量疲勞**:每次回覆疲勞 +1、依 `TALK_FATIGUE_HALF_LIFE_SECONDS` 衰減,
+    主動插話機率乘上 `1/(1+疲勞)`;捷徑(@、reply、接話)不受影響。
   - Discord 成功送出後，pipeline 才記錄已送達的文字、更新一般冷卻，並開始等待原發話者接話。
 
 - **`persona.py`** — 從 `personas/<PERSONA>.toml` 載入角色,組出 system prompt
@@ -104,8 +108,8 @@ discord 事件
 
 ## 行為調校的旋鈕(環境變數)
 
-- `DECISION_STRATEGY`:`heuristic`(預設,省成本)或 `llm`(更聰明、每則都花)。
-  **兩種都已實作,翻開關即切換**——這是「之後升級成 LLM 判斷氣氛」的預留路徑。
+- `DECISION_STRATEGY`:`heuristic`(預設,省成本)、`llm`(更聰明、每則都花)或
+  `hybrid`(抽中才問模型,兼顧兩者)。**三種都已實作,翻開關即切換**。
 - `REPLY_PROBABILITY`:heuristic 的基礎插話機率。想讓它更愛講話就調高。
 - `REPLY_COOLDOWN_SECONDS` / `DECISION_COOLDOWN_SECONDS`:防洗版 / 控 API 成本。
 - `ALLOWED_CHANNEL_IDS`:留空=所有頻道;填 ID=只在指定頻道互動。
